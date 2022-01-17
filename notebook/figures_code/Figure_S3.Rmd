@@ -1,0 +1,269 @@
+---
+title: "R Notebook"
+output: 
+---
+
+```{r}
+library(tidyverse)
+library(data.table)
+find_loc_donor <- function(location) {
+  if (location < -9) { loc = 'exon'
+  } else if (location > 9) { loc = 'intron'
+  } else {loc = 'donor'}
+  return(loc)
+}
+find_loc_donor <- Vectorize(find_loc_donor)
+theme_set(theme_classic())
+library(gtools)
+```
+
+```{r}
+
+canonical_donors <- fread('../../data/processed/human_introns.tsv.gz')
+canonical_donors <- canonical_donors[!grepl('N', window_seq)]
+```
+
+
+```{r}
+# function to count occurence of each nnt string
+window_tally <- function(nnt, df, grouping_variable = NULL) {
+  
+  seq <- df[, window_seq]
+  windows <- lapply(seq, function(x) stri_match_all_regex(x ,paste0("(?=([A-Z]{",nnt,"}))"))[[1]][,2])
+  
+  windows_dt <- data.table(windows = unlist(windows),
+                           width = rep(df[, width], each = length(windows[[1]])),
+                           exon_width = rep(df[, exon_width], each = length(windows[[1]])))
+  
+  if (!is.null(grouping_variable)) {
+    windows_dt$grouping_variable <- rep(df[, get(grouping_variable)], each = length(windows[[1]]))
+  } 
+  
+  n = 500/2 - nnt+ 2
+  
+  # remove windows outside of bounds of exon / intron for that particular donor
+  windows_dt[, location := rep(c(-250:-1,1:n), nrow(windows_dt) / length(c(-250:-1,1:n)))]
+  windows_dt[, filter_length := ifelse(location < 0 , -exon_width, width - 50)]
+  windows_dt <- windows_dt[abs(location) < abs(filter_length)]
+  
+  # get counts of introns in each window - i.e. at location -150 only introns with a width of > 150 will be in data table
+  vars <- c('location')
+  if (!is.null(grouping_variable)) {
+    vars <- c(vars, 'grouping_variable')
+  } 
+  
+  window_counts <- windows_dt[, .(window_count = .N), by = vars]
+
+  
+  # get frequencies of each nucleotide in each window, observed / expected
+  windows_dt <- window_counts[windows_dt, on = vars]
+  
+  vars2 <- c(vars, 'windows', 'window_count')
+  windows_dt_freq <- windows_dt[, .(n = .N), by = vars2] 
+  
+  windows_dt_freq[, nt_freq := n / window_count]
+  
+  if (is.null(grouping_variable)) {
+    windows_dt_freq <- setDT(arrange(windows_dt_freq, location, windows))
+  } else {
+    windows_dt_freq <- setDT(arrange(windows_dt_freq, location, windows, grouping_variable))
+  }
+  
+  # label window as exon, intron or donor
+  windows_dt_freq[, loc := find_loc_donor(location)]
+  
+  return(windows_dt_freq)
+}
+```
+
+# Figure S3A
+
+```{r}
+# plotting 1nt freqs around donor
+hg19_1nt_freq <- window_tally(1, canonical_donors)
+
+hg19_1nt_freq[, group := paste0(windows, loc)]
+
+plot_1nt <- ggplot(hg19_1nt_freq[loc != 'donor'], aes(x = location, y = nt_freq, 
+                                          color = windows, group = group)) + 
+  geom_point(size = 0.1) + 
+  geom_smooth(span = 0.5, fill = 'lightgrey', size = 0.6) +  
+  facet_wrap(~windows, nrow = 2) +
+  scale_color_manual(values = c('#419444', '#3a54a4',
+                                '#cf6d28','#e83526')) + 
+  scale_x_continuous(breaks = seq(-100 , 100, 30), expand = c(0, 0)) +
+  coord_cartesian(xlim = c(-100,100)) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 12),
+          axis.text.y = element_text(size = 12), axis.title = element_text(size = 12), 
+        panel.spacing = unit(1.8,'lines'), legend.position = 'none') +
+  geom_hline(yintercept = 0.25, linetype = 'dotted') +
+  geom_vline(xintercept = c(-10,10), linetype = 'dotted')  + 
+  xlab("Distance to Authentic Donor") + ylab("Nucleotide frequency") + 
+  labs(color = 'nucleotide') 
+```
+
+
+# Figure S3B
+```{r}
+# plotting 2nt raw frequencies around donor
+hg19_2nt_freq <- window_tally(2, canonical_donors)
+
+# adding labelling system for plot
+nt = c('A','C','T','G')
+dinucleotides <- apply(permutations(n = 4, r = 2, v = nt, repeats.allowed = T), 1, paste0, collapse = "")
+
+dict <- data.table(twont_windows = dinucleotides,
+                   facet = rep(c('An','Cn','Gn','Tn'), each = 4),
+                   label = rep(c('nA','nC','nG','nT'), 4))
+
+hg19_2nt_freq <- dict[hg19_2nt_freq, on = .(twont_windows = windows)]
+
+hg19_2nt_freq[, group := paste0(twont_windows, loc)]
+
+
+plot_2nt <- ggplot(hg19_2nt_freq[loc != 'donor'], 
+                   aes(x = location, y = nt_freq, color = label, group = group)) + 
+  facet_wrap(~facet) + 
+  geom_point(size = 0.1) + geom_smooth(fill = 'lightgrey', size = 0.6) +
+  scale_color_manual(values = c('#419444', '#3a54a4',
+                                '#cf6d28','#e83526')) + 
+  scale_x_continuous(breaks = seq(-100 , 100, 30), expand = c(0, 0)) +
+  coord_cartesian(xlim = c(-100,100)) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 12),
+          axis.text.y = element_text(size = 12), axis.title = element_text(size = 12), 
+        panel.spacing = unit(1.8,'lines')) +
+  geom_hline(yintercept = 1 / 16, linetype = 'dotted') +
+  geom_vline(xintercept = c(-10,10), linetype = 'dotted')  + 
+  xlab("Distance to Authentic Donor") + ylab("Dinucleotide frequency")  +
+  labs(color = 'second \nnucleotide')  
+
+```
+
+# Figure S3C
+
+
+```{r}
+canonical_donors[, intron_width_bin := cut(width,
+                                           quantile(width, c(0, 0.10, 0.30, 0.70, 0.90, 1)),
+                                          labels = c('0-10%ile', '10-30%ile',
+                                                     '30-70%ile', '70-90%ile', 
+                                                     '90-100%ile'),
+                                           include.lowest = T)]
+
+# 2nt repeats
+hg19_2nt_freq_IW <- window_tally(2, canonical_donors, grouping_variable = 'intron_width_bin')
+
+
+hg19_2nt_freq_IW <- dict[hg19_2nt_freq_IW, on = .(twont_windows = windows)]
+
+hg19_2nt_freq_IW[, group := paste0(twont_windows, loc)]
+
+
+IW_plot <- hg19_2nt_freq_IW[loc != 'donor' & 
+                              twont_windows %in% c('TT', 'GG')] %>%
+  mutate(twont_windows = factor(twont_windows, levels = c('GG', 'TT')))
+
+IW_plot <- ggplot(IW_plot, 
+       aes(x = location, y = nt_freq, color = label, group = group)) + 
+  facet_grid(twont_windows~grouping_variable) + 
+  geom_point(size = 0.3) + geom_smooth(fill = 'lightgrey', size = 0.6) +
+  scale_color_manual(values = c('#cf6d28','#e83526')) + 
+  scale_x_continuous(breaks = seq(-100 , 100, 40), expand = c(0, 0)) +
+  coord_cartesian(xlim = c(-100,100)) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 12),
+          axis.text.y = element_text(size = 12), axis.title = element_text(size = 12), 
+        panel.spacing = unit(1.8,'lines')) +
+  geom_hline(yintercept = 1 / 16, linetype = 'dotted') +
+  geom_vline(xintercept = c(-10,10), linetype = 'dotted')  + 
+  xlab("Distance to Authentic Donor") + ylab("Dinucleotide frequency")  +
+  labs(color = 'second \nnucleotide')  + ggtitle('Intron length')+
+  theme(plot.margin = margin(1,1.5,1,1.5, "cm"))
+
+
+```
+
+
+
+
+# Figure S3D
+
+```{r}
+canonical_donors[, plus3 := substr(window_seq, 253, 253)]
+# 2nt repeats
+hg19_2nt_freq_P3 <- window_tally(2, canonical_donors, grouping_variable = 'plus3')
+
+
+hg19_2nt_freq_P3 <- dict[hg19_2nt_freq_P3, on = .(twont_windows = windows)]
+
+hg19_2nt_freq_P3[, group := paste0(twont_windows, loc)]
+
+
+P3_plot <- hg19_2nt_freq_P3[loc != 'donor' & 
+                              twont_windows %in% c( 'TT', 'GG')] %>%
+  mutate(twont_windows = factor(twont_windows, levels = c('GG', 'TT')),
+         grouping_variable= factor(grouping_variable, levels = c('A', 'T', 'G', 'C')))
+
+
+P3_plot <- ggplot(P3_plot, 
+       aes(x = location, y = nt_freq, color = label, group = group)) + 
+  facet_grid(twont_windows~grouping_variable) + 
+  geom_point(size = 0.3) + geom_smooth(fill = 'lightgrey', size = 0.6) +
+  scale_color_manual(values = c('#cf6d28','#e83526')) + 
+  scale_x_continuous(breaks = seq(-100 , 100, 40), expand = c(0, 0)) +
+  coord_cartesian(xlim = c(-100,100)) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 12),
+          axis.text.y = element_text(size = 12), axis.title = element_text(size = 12), 
+        panel.spacing = unit(1.8,'lines')) +
+  geom_hline(yintercept = 1 / 16, linetype = 'dotted') +
+  geom_vline(xintercept = c(-10,10), linetype = 'dotted')  + 
+  xlab("Distance to Authentic Donor") + ylab("Dinucleotide frequency")  +
+  labs(color = 'second \nnucleotide')  + ggtitle("+3 of Donor")+
+  theme(plot.margin = margin(1,1.5,1,1.5, "cm"))
+
+```
+
+# Figure S3E
+
+
+```{r}
+canonical_donors[, DF_bin := cut(median_NIF_pctl,
+                                           c(0, 0.10, 0.30, 0.70, 0.90, 1),
+                                           include.lowest = T)]
+
+# 2nt repeats
+hg19_2nt_freq_DF <- window_tally(2, canonical_donors, grouping_variable = 'DF_bin')
+
+
+hg19_2nt_freq_DF <- dict[hg19_2nt_freq_DF, on = .(twont_windows)]
+
+hg19_2nt_freq_DF[, group := paste0(twont_windows, loc)]
+
+
+DF_plot <- hg19_2nt_freq_DF[loc != 'donor' & twont_windows %in% c( 'TT', 'GG')] %>%
+  mutate(twont_windows = factor(twont_windows, levels = c('GG', 'TT')))
+
+DF_plot <- ggplot(DF_plot, 
+       aes(x = location, y = nt_freq, color = label, group = group)) + 
+  facet_grid(twont_windows~grouping_variable) + 
+  geom_point(size = 0.3) + geom_smooth(fill = 'lightgrey', size = 0.6) +
+  scale_color_manual(values = c('#cf6d28','#e83526')) + 
+  scale_x_continuous(breaks = seq(-100 , 100, 40), expand = c(0, 0)) +
+  coord_cartesian(xlim = c(-100,100)) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 12),
+          axis.text.y = element_text(size = 12), axis.title = element_text(size = 12), 
+        panel.spacing = unit(1.8,'lines')) +
+  geom_hline(yintercept = 1 / 16, linetype = 'dotted') +
+  geom_vline(xintercept = c(-10,10), linetype = 'dotted')  + 
+  xlab("Distance to Authentic Donor") + ylab("Dinucleotide frequency")  +
+  labs(color = 'second \nnucleotide') + ggtitle('DF')+
+  theme(plot.margin = margin(1,1.5,1,1.5, "cm"))
+```
+
+
+```{r}
+top <- ggarrange(plot_1nt, plot_2nt, nrow = 1)
+ggarrange(top, IW_plot, P3_plot, DF_plot, ncol = 1)
+ggsave('../figures/figure_s3.pdf', width = 8, height = 13)
+
+```
+

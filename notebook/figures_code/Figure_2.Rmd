@@ -1,0 +1,290 @@
+---
+title: "R Notebook"
+output: 
+---
+
+
+```{r setup}
+library(tidyverse)
+library(data.table)
+library(TRAMPR)
+library(ggseqlogo)
+library(ggpubr)
+library(ggsci)
+library(BSgenome.Hsapiens.1000genomes.hs37d5)
+theme_set(theme_classic())
+library(ggpmisc)
+library(Rfast)
+library(caret)
+library(scales)
+library(GGally)
+library(gridExtra)
+library(ggseqlogo)
+```
+
+```{r}
+css_db <- fread('../../data/processed/css_database.tsv.gz')
+canonical_donors_decoys <- fread('../../data/processed/human_introns_decoys.tsv.gz')
+```
+
+
+```{r}
+# cryptic distance histograms
+# getting cryptic distances for percentile labels
+AM <- css_db[donor_category == 'cryptic' & variant_category %in% c('A'), .(decoy_distance)] %>% pull()
+CM <- css_db[donor_category == 'cryptic' & variant_category %in% c('B'), .(decoy_distance)] %>% pull()
+
+ecdf(AM)(c(250))
+ecdf(CM)(c(250))
+```
+
+
+# Figure 2A
+
+```{r}
+
+data <- css_db[donor_category == 'cryptic' & variant_category %in% c('A')] %>%
+  mutate(cryptic_loc = ifelse(decoy_distance < 0, 'exon', 'intron')) %>%
+  filter(abs(decoy_distance) <= 300) %>%
+  mutate(variant_category = ifelse(variant_category == 'A', 
+                                   'Authentic Modified', 'Cryptic Modified'))
+
+dddist <- ggplot(data, aes(x=decoy_distance)) + 
+  geom_histogram(aes(y=..count..),     
+                 binwidth=10,
+                 colour="black", fill="#cf5300", alpha = 0.8)  +
+  scale_y_continuous(expand = c(0,0)) +
+  scale_x_continuous(breaks = seq(-300, 300,50), labels = function(x) ifelse(x>0, paste0('+', x), x))   +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), 
+        axis.text = element_text(size = 10), 
+        axis.title = element_text(size = 10),
+         plot.margin = margin(20,0,0,0),
+        strip.background = element_blank(),
+        strip.text.x = element_blank())   +
+  xlab( "Location") +ylab("Count of Cryptic 5'SS") + 
+  coord_cartesian(ylim = c(0, 280))   + 
+  facet_wrap(~cryptic_loc, scales = 'free_x')+
+  geom_vline(data = filter(data, cryptic_loc == 'exon'), 
+             aes(xintercept = -250), linetype = 'dashed', color = '#808080') +
+  geom_vline(data = filter(data, cryptic_loc == 'exon'), 
+             aes(xintercept = -150), linetype = 'dashed', color = '#808080') +
+  geom_vline(data = filter(data, cryptic_loc == 'exon'), 
+             aes(xintercept = -50), linetype = 'dashed', color = '#808080') +
+  geom_vline(data = filter(data, cryptic_loc == 'exon'), 
+             aes(xintercept = -0), linetype = 'dashed', color = 'black') +
+  geom_vline(data = filter(data, cryptic_loc == 'intron'), 
+             aes(xintercept = 50), linetype = 'dashed', color = '#808080') +
+  geom_vline(data = filter(data, cryptic_loc == 'intron'), 
+             aes(xintercept = +150), linetype = 'dashed', color = '#808080') +
+  geom_vline(data = filter(data, cryptic_loc == 'intron'), 
+             aes(xintercept = 250), linetype = 'dashed', color = '#808080') +
+  ggtitle('Authentic-Modified')
+```
+
+
+
+
+# Figure 2B
+
+```{r}
+data <- css_db[donor_category == 'cryptic' & variant_category %in% c('B'), .(variant_category, decoy_distance)] %>%
+  mutate(variant_category = ifelse(variant_category == 'A', 
+                                   'Authentic Modified', 'Cryptic Modified')) %>%
+  filter(abs(decoy_distance) <= 300)%>%
+  mutate(cryptic_loc = ifelse(decoy_distance < 0, 'exon', 'intron'))
+
+
+ccdist <-  ggplot(data, aes(x=decoy_distance)) + 
+  geom_histogram(aes(y=..count..),     
+                 binwidth=10,
+                 colour="black", fill = c('dark green'), alpha = 0.8) +
+  scale_y_continuous(expand = c(0,0)) +
+  scale_x_continuous(breaks = seq(-300, 300,50), labels = function(x) ifelse(x>0, paste0('+', x), x))   +  
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), 
+        axis.text = element_text(size = 10), 
+        axis.title = element_text(size = 10),
+        plot.margin = margin(20,0,0,0),
+        strip.background = element_blank(),
+        strip.text.x = element_blank())   +
+  xlab( "Location") +ylab("Count of Cryptic 5'SS")+ 
+  coord_cartesian(ylim = c(0, 210))   + 
+  facet_wrap(~cryptic_loc, scales = 'free_x')+
+  geom_vline(data = filter(data, cryptic_loc == 'exon'), 
+             aes(xintercept = -250), linetype = 'dashed', color = '#808080') +
+  geom_vline(data = filter(data, cryptic_loc == 'exon'), 
+             aes(xintercept = -150), linetype = 'dashed', color = '#808080') +
+  geom_vline(data = filter(data, cryptic_loc == 'exon'), 
+             aes(xintercept = -50), linetype = 'dashed', color = '#808080') +
+  geom_vline(data = filter(data, cryptic_loc == 'exon'), 
+             aes(xintercept = -0), linetype = 'dashed', color = 'black') +
+  geom_vline(data = filter(data, cryptic_loc == 'intron'), 
+             aes(xintercept = 50), linetype = 'dashed', color = '#808080') +
+  geom_vline(data = filter(data, cryptic_loc == 'intron'), 
+             aes(xintercept = +150), linetype = 'dashed', color = '#808080') +
+  geom_vline(data = filter(data, cryptic_loc == 'intron'), 
+             aes(xintercept = 250), linetype = 'dashed', color = '#808080') +
+  ggtitle('Cryptic-Modified')
+```
+
+# Figure 2C - histogram
+
+```{r}
+
+ds_dist <- distinct(css_db[variant_category == 'C' & donor_category == 'cryptic', 
+                             .(variant_id, cryptic_category, cryptic_distance)]) %>%
+  separate_rows(cryptic_category,cryptic_distance, sep = ';')  %>%
+  filter(cryptic_category == 'C')  %>%
+  group_by(cryptic_distance) %>% tally()  %>%
+  mutate(cryptic_distance = as.numeric(cryptic_distance))  %>%
+  mutate(cryptic_distance = ifelse(cryptic_distance > 0, cryptic_distance + 1, cryptic_distance)) %>%
+  add_row(cryptic_distance = c(1,2), n = c(0,0)) %>%
+  filter(abs(cryptic_distance) <= 10)%>%
+  arrange(cryptic_distance) %>%
+  mutate(cryptic_distance = ifelse(cryptic_distance > 0, paste0('+',cryptic_distance), cryptic_distance))
+
+ds_dist <- mutate(ds_dist, cryptic_distance= factor(cryptic_distance, levels = ds_dist$cryptic_distance))
+
+setDT(ds_dist)
+ds_dist[cryptic_distance %in% c(-4, 4), plusminus4 := 1]
+ds_dist %>% group_by(plusminus4) %>% summarise(n = sum(n))
+
+ds_distp <- ggplot(ds_dist, aes(x=cryptic_distance, y = n)) + 
+  geom_bar(stat = 'identity', colour="black", fill = c('#000080'), alpha = 0.8)   +
+  scale_y_continuous(expand = c(0,0))  +  
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), 
+        axis.text = element_text(size = 10), 
+        axis.title = element_text(size = 10),
+        plot.margin = margin(20,0,0,0)) +
+  coord_cartesian(ylim = c(0,110))  +
+  xlab( "Location") +ylab("Count of Cryptic 5'SS")+
+  geom_text(aes(label = n), vjust = -0.1) +
+  ggtitle('Authentic-Modified/Cryptic-Modified')
+
+```
+
+# Figure 2C - pictogram
+
+```{r}
+# pictograms
+picts <- distinct(css_db[variant_category == 'C' & donor_category == 'cryptic' & variant_type != 'DEL',
+         .(variant_id, cryptic_category, cryptic_distance, strand, chrom, authentic_donor_pos,
+           authentic_donor_seq_ref, authentic_donor_seq_alt,
+           cryptic_donor_seq_ref,cryptic_donor_seq_alt)]) %>%
+  separate_rows(cryptic_category,cryptic_distance, cryptic_donor_seq_ref, cryptic_donor_seq_alt, sep = ';')  %>%
+  filter(cryptic_category == 'C'  & cryptic_distance %in% c(-4,4))%>% setDT() %>%
+  mutate(ref_seq = ifelse(cryptic_distance == 4, paste0(authentic_donor_seq_ref, substr(cryptic_donor_seq_ref, 9, 12)),
+                          paste0(cryptic_donor_seq_ref, substr(authentic_donor_seq_ref, 9, 12))),
+         alt_seq = ifelse(cryptic_distance == 4, paste0(authentic_donor_seq_alt, substr(cryptic_donor_seq_alt, 9, 12)),
+                          paste0(cryptic_donor_seq_alt, substr(authentic_donor_seq_alt, 9, 12))))
+
+
+labelsA <- c('E4','E3','E2','E1','D1','D2','D3','D4','D5','D6','D7','D8','D9','D10','D11','D12')
+labelsB <- c('E8','E7','E6','E5','E4','E3','E2','E1','D1','D2','D3','D4','D5','D6','D7','D8')
+
+plotlist <- list(theme( axis.text.y = element_blank(),
+        axis.text.x = element_text(angle = 45, hjust = 1, size =6)), 
+  scale_fill_manual(values = c('#419444','#3a54a4' , '#cf6d28', '#e83526' )))
+
+plus4ref <- ggseqlogo(picts[cryptic_distance == 4, ref_seq], method = 'probability') +
+  scale_x_continuous(breaks = 1:16, labels = labelsA) + plotlist + theme(axis.text.x = element_blank()) +
+  theme(axis.title.y = element_blank())
+
+plus4alt <- ggseqlogo(picts[cryptic_distance == 4, alt_seq], method = 'probability')+
+  scale_x_continuous(breaks = 1:16, labels = labelsA) + plotlist +
+  theme(axis.title.y = element_blank())
+
+plus4 <- ggarrange(plus4ref, plus4alt, nrow = 2, heights = c(1, 1.1))
+
+min4ref <- ggseqlogo(picts[cryptic_distance == -4, ref_seq], method = 'probability')+
+  scale_x_continuous(breaks = 1:16, labels = labelsB) + plotlist +  theme(axis.text.x = element_blank())+ ylab('Ref') 
+min4alt <- ggseqlogo(picts[cryptic_distance == -4, alt_seq], method = 'probability')+
+  scale_x_continuous(breaks = 1:16, labels = labelsB) + plotlist  + ylab('Alt')
+
+min4 <- ggarrange(min4ref, min4alt, nrow = 2, heights = c(1, 1.1))
+
+picts <- ggarrange(min4, plus4, ncol = 2, widths = c(1.1, 1))
+```
+
+
+```{r}
+# 2)	86% of confirmed cryptic-5'SS lie within 250 nt of the authentic-5'SS
+both <- css_db[donor_category == 'cryptic', .(abs(decoy_distance))] %>% pull()
+
+ecdf(both)(c(250))
+```
+
+# Figure 2D
+
+```{r}
+# exon length percentiles - exclude first and last exons
+exons <- fread('../../data/ref/ensembl75_canonical_exons.tsv')
+exons <- exons[exon_no != 1 & exon_no != nexon]
+
+data <- css_db[donor_category == 'decoy' & abs(decoy_distance) < 250]%>%
+  mutate(cryptic_loc = ifelse(decoy_distance < 0, 'exon', 'intron'))
+
+decoydist <- ggplot(data, aes(x=decoy_distance)) + 
+  geom_histogram(aes(y=..count..),     
+                 binwidth=10,
+                 colour="black", fill="grey", alpha = 0.8)  +
+  scale_y_continuous(expand = c(0,0)) +
+  scale_x_continuous(breaks = seq(-300, 300,50), labels = function(x) ifelse(x>0, paste0('+', x), x))   +  
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), 
+        axis.text = element_text(size = 10), 
+        axis.title = element_text(size = 10),
+        plot.margin = margin(20,0,0,0),
+        strip.background = element_blank(),
+        strip.text.x = element_blank())  +
+  xlab( "Location") +ylab("Count of Decoy 5'SS")  +
+  geom_vline(data = filter(data, cryptic_loc == 'exon'), 
+             aes(xintercept = -quantile(exons$width, c(0.5))), linetype = 'dashed', color = 'black')+
+  geom_vline(data = filter(data, cryptic_loc == 'exon'), 
+             aes(xintercept = -quantile(exons$width, c(0.9))), linetype = 'dashed', color = 'black') + 
+  coord_cartesian(ylim = c(0, 6200))   + 
+  facet_wrap(~cryptic_loc, scales = 'free_x')
+```
+
+
+
+# Figure 2E
+
+```{r}
+setDT(canonical_donors_decoys)
+canonical_donors_decoys[, decoy_count := .N, by = donor_id]
+canonical_donors_decoys[is.na(decoy_loc), decoy_count := 0]
+
+mean <- round(mean(distinct(canonical_donors_decoys[, .(donor_id, decoy_count)])[, decoy_count]), digits = 0)
+
+xlim <- quantile(distinct(canonical_donors_decoys[, .(donor_id, decoy_count)])[, decoy_count], 0.999)
+
+decoy_hist <- distinct(canonical_donors_decoys[, .(donor_id, decoy_count)]) %>%
+  ggplot(aes(x = decoy_count)) + geom_histogram(binwidth = 1, fill = 'grey')+
+  scale_y_continuous(expand = c(0,0))  + 
+  ylab("Number of authentic 5'SS") + xlab("Number of decoy 5'SS +/- 250nt") +
+  labs(fill = "Decoy 5'SS NIF relative to Authentic 5'SS") +
+  theme(legend.position = 'bottom') +
+  geom_vline(xintercept = mean, 
+             linetype = 'dotted') +
+  annotate("text", x = mean +2, y = 5900, 
+           label = mean) + 
+  coord_cartesian(ylim = c(0, 6300), xlim = c(0, xlim))
+```
+
+
+
+
+```{r}
+
+AB <- ggarrange(dddist, ccdist, ncol = 2)
+C <- ggarrange(picts, ds_distp, nrow = 2, heights = c(1, 1.3))+
+  theme(plot.margin = margin(1,4,1,4, "cm")) 
+DE <- ggarrange(decoydist, decoy_hist, ncol = 2, widths = c(1,2))
+
+
+
+ggarrange(AB, C, DE, nrow = 3, heights = c(1,1.2, 1))
+ggsave('../figures/figure_2.pdf', width = 11, height = 11)
+```
+
+
+

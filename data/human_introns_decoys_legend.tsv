@@ -1,0 +1,16 @@
+Column	Description
+tx_id	ensembl transcript id
+donor_id	colon delimited chrom:donor_pos
+chrom	chromosome
+donor_pos	genomic location of annotated-donor
+strand	plus or minus strand
+exon_width	width of exon the donor is at the 3' end of
+intron_width	width of intron the donor is at the 5' end of
+median_NIF_pctl	DF of annotated-donor
+decoy_seq	sequence of decoy-donor
+decoy_loc	distance of decoy-donor to annotated-donor
+decoy_gloc	genomic location of decoy-donor
+median_NIF_pctl_decoy	DF of decoy-donor
+decoy_location	whether the decoy-donor is in the exon or intron
+decoy_relative_NIF	decoy-donor DF / annotated-donor DF
+frame	whether the decoy-distance is divisible by 3 or not

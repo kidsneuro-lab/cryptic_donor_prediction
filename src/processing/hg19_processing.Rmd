@@ -1,0 +1,136 @@
+---
+title: "R Notebook"
+output:
+---
+
+```{r setup, echo = F}
+library(data.table)
+library(tidyverse)
+library(BSgenome.Hsapiens.1000genomes.hs37d5)
+library(expss)
+library(Biobase)
+library(stringi)
+library(gtools)
+source('../../utils.R')
+library(rematch2)
+```
+
+
+```{r}
+# load canonical introns
+introns <- fread('../../data/ref/ensembl75_canonical_introns.tsv')
+# remove first and last introns
+introns <- introns[intron_no != 1 & intron_no != (nexon - 1)]
+# load canonical exons
+exons <- fread('../../data/ref/ensembl75_canonical_exons.tsv')
+
+# remove single exon transcripts
+exons <- exons[nexon != 1]
+introns <- introns[nexon != 1]
+
+# remove exons, introns with alternative 5' or 3' ends
+exons <- exons[,count := .N, by = list(chrom,strand,start)][count == 1]
+exons <- exons[,count := .N, by = list(chrom,strand,end)][count == 1]
+introns <- introns[,count := .N, by = list(chrom,strand,start)][count == 1]
+introns <- introns[,count := .N, by = list(chrom,strand,end)][count == 1]
+  
+# get donor position, id, first nt pos of next exon for joining
+introns[,donor_pos := ifelse(strand== '+', start, end)]
+introns[,donor_id := paste(chrom, donor_pos, sep = ":")]
+introns[, previous_exon_end := ifelse(strand == '+', donor_pos - 1, donor_pos + 1)]
+exons[, exon_end := ifelse(strand == '+', end, start)]
+# get width of next exon by joining with hg19_exons
+canonical_donors <- exons[,.(chrom,exon_end,exon_width = width)][introns, 
+                                                                    on = .(chrom == chrom,
+                                                                           exon_end == previous_exon_end)]
+
+canonical_donors <- canonical_donors[!is.na(exon_width)]
+
+# remove donors outside transcript ORFs
+cds_df <- fread('../../data/ref/hg19_orfs.tsv')
+tx_orfs <- cds_df %>%
+  group_by(tx_id, chr, strand) %>%
+  dplyr::summarise(min_start = min(start), min_end = min(end),
+                   max_start = max(start), max_end = max(end)) %>%
+  mutate(orf_start = min(min_start, min_end, max_start, max_end),
+         orf_end =  max(min_start, min_end, max_start, max_end)) %>% 
+  ungroup() %>%
+  dplyr::select(tx_id, orf_start, orf_end) %>% setDT()
+canonical_donors <- tx_orfs[canonical_donors, on = .(tx_id)][between(donor_pos, orf_start, orf_end)]
+```
+
+
+
+```{r}
+
+canonical_donors[,`:=`(window_start = donor_pos - window_length,
+                       window_end = donor_pos + window_length)]
+
+canonical_donors[,window_seq := as.vector(getSeq(x = BSgenome.Hsapiens.1000genomes.hs37d5,
+                                             names = chrom,
+                                             start = window_start,
+                                             end = window_end,
+                                             strand = strand))]
+
+#adding DF scores
+DF_scores <- fread('../../data/ref/hg19_DFscores.tsv.gz')
+canonical_donors <- DF_scores[canonical_donors, on = .(donor_id)]
+```
+
+
+
+```{r}
+# finding relative position and sequence of all decoys surrounding hg19 donors
+canonical_donors[, decoy_seq := list(list(stri_match_all_regex(window_seq, regex_donor)[[1]][,2])), by = 1:nrow(canonical_donors)]
+canonical_donors[, decoy_loc := list(list(stri_locate_all_regex(window_seq, regex_donor)[[1]][,1] +
+                                            abs(max_exon_pos) - window_length - 1)), by = 1:nrow(canonical_donors)]
+canonical_donors_decoys <- canonical_donors[, list(decoy_seq = as.character(unlist(decoy_seq)),
+                                                   decoy_loc = as.numeric(unlist(decoy_loc))),
+                                            by = list(tx_id, chrom,  strand, exon_width, width, 
+                                                      donor_pos, donor_id, median_NIF_pctl)]
+canonical_donors_decoys <- canonical_donors_decoys[decoy_loc != 0]
+# remove decoys which occur beyond bounds of the exon or in the last 50nt of the intron
+canonical_donors_decoys <- canonical_donors_decoys[decoy_loc >  - (exon_width-4) & decoy_loc < width - 50]
+# finding decoy donor genomic location
+canonical_donors_decoys[strand == '+', decoy_gloc := donor_pos + decoy_loc]
+canonical_donors_decoys[strand == '-', decoy_gloc := donor_pos - decoy_loc]
+canonical_donors_decoys[, decoy_donor_id := paste(chrom, decoy_gloc, sep = ":")]
+```
+
+
+
+```{r}
+#adding DF scores for decoys
+canonical_donors_decoys <- DF_scores[, .(decoy_donor_id = donor_id, 
+                                         median_NIF_pctl_decoy = median_NIF_pctl)][canonical_donors_decoys, 
+                                                                                   on = .(decoy_donor_id)]
+```
+
+
+```{r}
+# selecting/ordering columns
+canonical_donors_decoys <- canonical_donors_decoys[,.(tx_id,  donor_id, chrom, donor_pos, strand, exon_width,
+                                                      intron_width = width, median_NIF_pctl,
+                                                      decoy_seq, decoy_loc, decoy_gloc,median_NIF_pctl_decoy)]
+```
+
+```{r}
+# some additional annotations
+canonical_donors_decoys[, decoy_location := ifelse(decoy_loc < -10, 'exon',
+                                                   ifelse(abs(decoy_loc) <= 10, 'donor','intron'))]
+canonical_donors_decoys[, decoy_location := factor(decoy_location, levels = c('exon', 'donor', 'intron'))]
+
+canonical_donors_decoys[, decoy_relative_NIF := median_NIF_pctl_decoy / median_NIF_pctl]
+
+#column denoting which frame decoy is in relative to the authentic donor
+canonical_donors_decoys[, frame := ifelse(abs(decoy_loc %% 3) == 0, 'in-frame', 'out of frame')]
+```
+
+
+
+```{r}
+setorder(canonical_donors_decoys, chrom,donor_id,decoy_loc)
+
+fwrite(canonical_donors_decoys, '../../data/processed/human_introns_decoys.tsv.gz')
+```
+

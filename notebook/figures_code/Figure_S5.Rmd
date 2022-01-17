@@ -1,0 +1,122 @@
+---
+title: "R Notebook"
+output: 
+---
+
+```{r}
+library(ggrastr)
+library(ggpubr)
+library(data.table)
+source('../../utils.R')
+
+
+canonical_donors_decoys <- fread('../../data/processed/human_introns_decoys.tsv.gz')
+simulation_decoys <- fread('../../data/ref/human_introns_decoys_simulations.tsv.gz')
+```
+
+
+# Figure S5A
+
+```{r}
+frame <- decoy_depletion_grouped(simulation_decoys[decoy_location != 'donor'  
+                                                   & substr(decoy_seq,6,6) == 'C'], 
+                        canonical_donors_decoys[decoy_location != 'donor'
+                                                & substr(decoy_seq,6,6) == 'C'], 
+                        'frame', decoy_dist_filter = 150)
+
+frame[, group := paste0(frame,decoy_location)]
+
+supp_a <- ggplot(frame, aes(x = decoy_loc, y= obs_v_exp, color = factor(frame), group = group))  +
+  geom_point(size = 0.1, alpha = 0.5)   + 
+  geom_smooth() +
+  scale_color_manual(values = c('orange', 'red'))+ 
+  scale_x_continuous(breaks = seq(-150 , 150, 30), 
+                     labels = function(x) ifelse(x>0, paste0('+', x), x), expand = c(0, 0)) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 12),
+          axis.text.y = element_text(size = 12), axis.title = element_text(size = 12), 
+        panel.spacing = unit(1.8,'lines')) +
+  geom_hline(yintercept = 1, linetype = 'dotted') +
+  geom_vline(xintercept = c(-10,10), linetype = 'dotted')  + 
+  xlab("Distance to authentic donor") + ylab("observed over expected")  + labs(color = "") +
+  coord_cartesian(ylim = c(0.1, 1.5))
+```
+
+
+# Figure S5B
+
+```{r}
+msd <- fread('../../data/ref/splice_competent_events.tsv.gz')
+msd <- msd[tx_id %in% unique(canonical_donors_decoys$tx_id) & 
+             splice_site_pos %in% unique(canonical_donors_decoys$donor_pos)]
+
+# remove splice sites with no evidence of normal splicing
+msd[, ssid := paste(splice_site_pos, tx_id, sep = ':')]
+ssid_rm <- msd[splicing_event_class == 'normal splicing' & in_intropolis == F & in_gtex == F, ssid]
+
+
+canonical_donors_decoys_msd <- msd[, .(tx_id, chrom = chr, donor_pos = splice_site_pos, 
+        decoy_gloc = donor_pos, sample_count, 
+        gtex_max_uniq_map_reads, intropolis_max_reads)][canonical_donors_decoys, 
+                                                        on = .(tx_id, chrom, donor_pos, decoy_gloc)]
+
+canonical_donors_decoys_msd[,ssid := paste(donor_pos, tx_id, sep = ':')]
+canonical_donors_decoys_msd <- canonical_donors_decoys_msd[!ssid %in% ssid_rm]
+
+canonical_donors_decoys_msd <- canonical_donors_decoys_msd[-which(duplicated(canonical_donors_decoys_msd[, .(tx_id, chrom, donor_pos, decoy_gloc)]) == T),]
+
+nrow(canonical_donors_decoys_msd[!is.na(sample_count)]) / nrow(canonical_donors_decoys_msd)
+```
+
+```{r}
+find_loc_donor <- function(location) {
+  if (location < -9) { loc = 'exon'
+  } else if (location > 9) { loc = 'intron'
+  } else {loc = 'donor'}
+  return(loc)
+}
+find_loc_donor <- Vectorize(find_loc_donor)
+
+canonical_donors_decoys_msd[, loc := find_loc_donor(decoy_loc)]
+
+canonical_donors_decoys_msd[, frame := ifelse(abs(decoy_loc %% 3) == 0, 'in-frame', 'out of frame')]
+
+canonical_donors_decoys_msd[, in_msd := ifelse(sample_count <= 3 | is.na(sample_count), 'not in MSD', 'in MSD')]
+canonical_donors_decoys_msd[, nif0 := ifelse(median_NIF_pctl_decoy == 0, 'NIF=0', 'NIF>0')]
+```
+
+
+```{r}
+supp_b_dat <- canonical_donors_decoys_msd %>%
+  filter(substr(decoy_seq, 5,6) %in% c('GT', 'GC') & loc != 'donor')%>%
+  mutate(ES_motif = ifelse(substr(decoy_seq, 5,6) == 'GT', 'GT', 'GC'))  %>%
+  mutate(group = paste0(ES_motif,loc)) %>%
+  group_by(decoy_loc, in_msd, ES_motif, group) %>% tally() %>% 
+  ungroup() %>% group_by(decoy_loc, ES_motif, group)%>% 
+  mutate(perc = n / sum(n)) %>%
+  filter(in_msd == 'in MSD') 
+
+supp_b <- supp_b_dat %>%
+  ggplot(aes(x = decoy_loc, y = perc, color = ES_motif, group = group)) +
+  coord_cartesian(xlim = c(-150,150)) +
+  geom_point(size = 0.1, alpha = 0.5)   + 
+  geom_smooth() +
+  scale_color_manual(values = c('#3a54a4', '#e83526'))+ 
+  scale_x_continuous(breaks = seq(-150 , 150, 20), 
+                     labels = function(x) ifelse(x>0, paste0('+', x), x), expand = c(0, 0)) +
+  scale_y_continuous(labels = scales::percent)+ 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 12),
+          axis.text.y = element_text(size = 12), axis.title = element_text(size = 12), 
+        panel.spacing = unit(1.8,'lines')) +
+  geom_vline(xintercept = c(-10,10), linetype = 'dotted')  + 
+  xlab("Distance to authentic donor") + ylab("% of decoys that\nare splice-competent")  +
+  labs(color = "") 
+
+
+```
+
+
+```{r}
+ggarrange(supp_a, supp_b, nrow= 1)
+ggsave('../figures/figure_s5.pdf', width = 9, height = 3)
+```
+

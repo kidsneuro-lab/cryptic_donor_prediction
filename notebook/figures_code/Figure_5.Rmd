@@ -1,0 +1,130 @@
+---
+title: "R Notebook"
+output: 
+---
+
+
+```{r echo = F, results = hide}
+library(data.table)
+library(tidyverse)
+theme_set(theme_classic())
+library(RColorBrewer)
+source('../../utils.R')
+library(ggrastr)
+library(ggpubr)
+canonical_donors_decoys <- fread('../../data/processed/human_introns_decoys.tsv.gz')
+simulation_decoys <- fread('../../data/ref/human_introns_decoys_simulations.tsv.gz')
+
+```
+
+# Figure 5A
+```{r}
+simulation_decoys[, GGGmotif := ifelse(grepl('GGG', decoy_seq), 'yes','no')]
+canonical_donors_decoys[, GGGmotif := ifelse(grepl('GGG', decoy_seq), 'yes','no')]
+GGGmotif <- decoy_depletion_grouped(simulation_decoys[decoy_location != 'donor' & 
+                                                        substr(decoy_seq,6,6) == 'T' &
+                                                        decoy_authentic_relative_strength > 0.1], 
+                        canonical_donors_decoys[decoy_location != 'donor' & 
+                                                  substr(decoy_seq,6,6) == 'T' & 
+                                                  decoy_authentic_relative_strength > 0.1], 
+                        'GGGmotif', 150)
+
+
+GGGmotif[, group := paste0(GGGmotif,decoy_location)]
+
+d <- ggplot(GGGmotif, aes(x = decoy_loc, y= obs_v_exp, color = factor(GGGmotif), group = group))  +
+  geom_point(size = 0.1, alpha = 0.5)   + 
+  geom_smooth() +
+  scale_color_manual(values = c('grey', '#cf6d28'))+ 
+  scale_x_continuous(breaks = seq(-150 , 150, 20),labels = function(x) ifelse(x>0, paste0('+', x), x), expand = c(0, 0)) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 12),
+        axis.text.y = element_text(size = 12), axis.title = element_text(size = 12), 
+        panel.spacing = unit(1.8,'lines')) +
+  geom_hline(yintercept = 1, linetype = 'dotted') +
+  geom_vline(xintercept = c(-10,10), linetype = 'dotted')  + 
+  xlab("Distance to authentic donor") + ylab("observed over expected")  + labs(color = "overlapping GGG") +
+  coord_cartesian(ylim = c(0.1, 1.5))
+```
+
+
+# Figure 5b
+
+```{r}
+msd <- fread('../../data/ref/splice_competent_events.tsv.gz')
+msd <- msd[tx_id %in% unique(canonical_donors_decoys$tx_id) & 
+             splice_site_pos %in% unique(canonical_donors_decoys$donor_pos)]
+
+# remove splice sites with no evidence of normal splicing
+msd[, ssid := paste(splice_site_pos, tx_id, sep = ':')]
+ssid_rm <- msd[splicing_event_class == 'normal splicing' & in_intropolis == F & in_gtex == F, ssid]
+
+
+canonical_donors_decoys_msd <- msd[, .(tx_id, chrom = chr, donor_pos = splice_site_pos, 
+        decoy_gloc = donor_pos, sample_count, 
+        gtex_max_uniq_map_reads, intropolis_max_reads)][canonical_donors_decoys, 
+                                                        on = .(tx_id, chrom, donor_pos, decoy_gloc)]
+
+canonical_donors_decoys_msd[,ssid := paste(donor_pos, tx_id, sep = ':')]
+canonical_donors_decoys_msd <- canonical_donors_decoys_msd[!ssid %in% ssid_rm]
+
+canonical_donors_decoys_msd <- canonical_donors_decoys_msd[-which(duplicated(canonical_donors_decoys_msd[, .(tx_id, chrom, donor_pos, decoy_gloc)]) == T),]
+
+canonical_donors_decoys_msd[, in_msd := ifelse(sample_count <= 3 | is.na(sample_count), 'not in MSD', 'in MSD')]
+canonical_donors_decoys_msd[, nif0 := ifelse(median_NIF_pctl_decoy == 0, 'NIF=0', 'NIF>0')]
+```
+
+      
+```{r}
+
+find_loc_donor <- function(location) {
+  if (location < -9) { loc = 'exon'
+  } else if (location > 9) { loc = 'intron'
+  } else {loc = 'donor'}
+  return(loc)
+}
+find_loc_donor <- Vectorize(find_loc_donor)
+
+canonical_donors_decoys_msd[, loc := find_loc_donor(decoy_loc)]
+
+canonical_donors_decoys_msd[, frame := ifelse(abs(decoy_loc %% 3) == 0, 'in-frame', 'out of frame')]
+```
+
+
+```{r}
+# decoys which overlap any GGG motif will NOT be depleted, decoys which do not overlap any GGG motif WILL be depleted
+h <- canonical_donors_decoys_msd %>%
+  filter(loc != 'donor')  %>%
+  mutate(GGGmotif = ifelse(grepl('GGG', decoy_seq), 'yes','no'),
+         decoy_authentic_relative_strength = median_NIF_pctl_decoy / median_NIF_pctl,
+        decoy_authentic_relative_strength_bin = cut(decoy_authentic_relative_strength, 
+                                                     breaks = c(0,0.1, 0.5, 0.9, max_val),
+                                                     labels = c('<10%','10-50%', '50-90%', '>=90%'),
+                                                     include.lowest = T)) %>%
+  mutate(group = paste0(GGGmotif,loc)) %>%
+  filter(decoy_authentic_relative_strength > 0.1) %>%
+  group_by(decoy_loc, in_msd, GGGmotif, group) %>% tally() %>% 
+  ungroup() %>% group_by(decoy_loc, GGGmotif, group)%>% 
+  mutate(perc = n / sum(n))%>%
+  filter(in_msd == 'in MSD') %>%
+  ggplot(aes(x = decoy_loc, y = perc, color = GGGmotif, group = group))+
+  coord_cartesian(xlim = c(-150,150)) +
+  geom_point(size = 0.1, alpha = 0.5)   + 
+  geom_smooth() +
+  scale_color_manual(values = c('grey', '#cf6d28'))+ 
+  scale_x_continuous(breaks = seq(-150 , 150, 20), 
+                     labels = function(x) ifelse(x>0, paste0('+', x), x), expand = c(0, 0)) +
+  scale_y_continuous(labels = scales::percent)+ 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 12),
+          axis.text.y = element_text(size = 12), axis.title = element_text(size = 12), 
+        panel.spacing = unit(1.8,'lines')) +
+  geom_vline(xintercept = c(-10,10), linetype = 'dotted')  + 
+  xlab("Distance to authentic donor") + ylab("% of decoys that are splice-competent")  +
+  labs(color = "overlapping GGG") #+ facet_wrap(~decoy_authentic_relative_strength_bin, scales = 'free_y')
+
+```
+
+
+```{r}
+ggarrange(d,h, nrow = 1)
+ggsave('../figures/figure_5.pdf', width = 9, height = 3)
+```

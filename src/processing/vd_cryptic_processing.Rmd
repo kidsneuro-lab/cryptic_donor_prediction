@@ -1,0 +1,325 @@
+---
+title: "R Notebook"
+output: 
+---
+
+```{r, echo = F, results = F}
+library(data.table)
+library(tidyverse)
+library(R.utils)
+library(stringi)
+library(expss)
+library(BSgenome.Hsapiens.1000genomes.hs37d5)
+library(Rfast)
+source('../../utils.R')
+```
+
+```{r}
+# load introns/exons for information needed to add to vd_cryptic
+# load all introns
+introns <- fread('../../data/ref/ensembl75_all_introns.tsv.gz')
+#load all exons
+exons <- fread('../../data/ref/ensembl75_all_exons.tsv.gz')
+
+# get donor position, id, first nt pos of next exon for joining
+introns[, `:=` (stranded_start = ifelse(strand == '+', start, end), 
+                stranded_end = ifelse(strand == '+', end, start))]
+exons[, `:=` (stranded_start = ifelse(strand == '+', start, end), 
+              stranded_end = ifelse(strand == '+', end, start))]
+introns[,donor_id := paste(chrom, stranded_start, sep = ":")]
+
+exons[strand == '+', exonintronjoin := stranded_end + 1]
+exons[strand == '-', exonintronjoin := stranded_end - 1]
+
+# get width of next exon by joining with hg19_exons
+donors <- exons[,.(chrom,exonintronjoin,exon_width = width, tx_id, start, end)][introns, 
+                                                              on = .(chrom == chrom,
+                                                                     exonintronjoin == stranded_start,
+                                                                     tx_id),
+                                                              .(chrom, tx_id, strand, donor_id, intron_width = width,
+                                                                exon_width, exon_start = start, exon_end = end,
+                                                                intron_start = i.start, intron_end = i.end)]
+
+donors[strand == '+', region_start := exon_start]
+donors[strand == '-', region_start := intron_start]
+donors[strand == '+', region_end := intron_end]
+donors[strand == '-', region_end := exon_end]
+donors[, `:=` (exon_start = NULL, exon_end = NULL, intron_start = NULL, intron_end = NULL)]
+
+```
+
+```{r}
+vd_cryptic <- fread("../../data/raw/combined_cryptic_variants.tsv")
+
+#for each donor get length of preceding exon, length of succeeding intron 
+vd_cryptic[, donor_id := paste(chr, authentic_donor_pos, sep = ":")]
+vd_cryptic <- donors[vd_cryptic, on = .(donor_id, tx_id, strand)]
+
+#restructuring so variants with multiple used cryptic donors get seperate rows
+vd_cryptic <- vd_cryptic[, list(cryptic_sites = as.character(unlist(strsplit(cryptic_sites, "\\;")))),
+                  by = c(names(vd_cryptic)[-which(names(vd_cryptic)=='cryptic_sites')])]
+
+# remove candidate cryptics, keep only actual used cryptics
+vd_cryptic <- vd_cryptic[!grepl('candidate', cryptic_sites)]
+
+#Getting the genomic position of the donor G for actual cryptic sites
+vd_cryptic[, cryptic_donor_pos := sapply(strsplit(cryptic_sites,"\\|"),"[",2)]
+vd_cryptic[, cryptic_donor_pos := strtoi(cryptic_donor_pos)]
+
+# remove cryptic 5SS occuring outside region boundary 
+vd_cryptic <- vd_cryptic[cryptic_donor_pos >= region_start & cryptic_donor_pos <= region_end]
+
+```
+
+```{r}
+#Getting hg19 sequence between these genomic coordinates
+vd_cryptic[, var_start := pos]
+vd_cryptic[, var_end := pos + nchar(ref) -1]
+
+vd_cryptic[, window_start := ifelse(strand == '+', region_start + max_exon_pos, region_start - (max_intron_pos - 1))]
+vd_cryptic[, window_end := ifelse(strand == '+', region_end + (max_intron_pos - 1), region_end - max_exon_pos)]
+
+vd_cryptic[,ref_seq := as.vector(getSeq(x = BSgenome.Hsapiens.1000genomes.hs37d5,
+                                      names = chr,
+                                      start = window_start,
+                                      end = window_end))]
+
+vd_cryptic <- vd_cryptic[!(var_start - window_start) > 60000]
+
+vd_cryptic[, alt_seq := get_alt_seq(window_start, var_start, ref, alt, ref_seq), by = 1:nrow(vd_cryptic)]
+
+# reverse complement ref and alt on negative strand
+vd_cryptic[strand == '-', ref_seq := chartr('ATCG', 'TAGC', stri_reverse(ref_seq))]
+vd_cryptic[strand == '-', alt_seq := chartr('ATCG', 'TAGC', stri_reverse(alt_seq))]
+
+vd_cryptic[, variant_type := variant_type(ref,alt), by = 1:nrow(vd_cryptic)]
+
+# annotate variant position relative to authentic donor G 
+vd_cryptic[, dist_from_donor_start := find_dist_from_donor_start(authentic_donor_pos,var_start,var_end,strand,variant_type)]
+vd_cryptic[, dist_from_donor_end := find_dist_from_donor_end(authentic_donor_pos,var_start,var_end,strand,variant_type)]
+```
+
+```{r}
+# annotating NIFs of ref/alt authentic donor, and cryptic donor
+vd_cryptic[, authentic_ref_sp := find_ref_sp(strand, authentic_donor_pos, window_start, window_end), by = 1:nrow(vd_cryptic)]
+vd_cryptic[, authentic_alt_sp := find_alt_sp(strand, variant_type, authentic_donor_pos, var_start, 
+                                   var_end, window_start, window_end, ref, alt), by = 1:nrow(vd_cryptic)]
+
+vd_cryptic[, cryptic_ref_sp := find_ref_sp(strand, cryptic_donor_pos, window_start, window_end), by = 1:nrow(vd_cryptic)]
+vd_cryptic[, cryptic_alt_sp := find_alt_sp(strand, variant_type, cryptic_donor_pos, var_start, 
+                                   var_end, window_start, window_end, ref, alt), by = 1:nrow(vd_cryptic)]
+
+#remove any variants where the cryptic is not a GT/GC - may be misannotation in vd_cryptic
+vars_to_remove <- vd_cryptic[! grepl('GT|GC', substr(alt_seq, cryptic_alt_sp, cryptic_alt_sp + 1)), variant_id]
+vd_cryptic <- vd_cryptic[!variant_id %in% vars_to_remove]
+```
+
+```{r}
+# get E4 - D8 of ref and alt donor & cryptic
+vd_cryptic[, authentic_donor_seq_ref := substr(ref_seq, authentic_ref_sp - 4, authentic_ref_sp + 7)]
+vd_cryptic[, authentic_donor_seq_alt := substr(alt_seq, authentic_alt_sp - 4, authentic_alt_sp + 7)]
+vd_cryptic[, cryptic_donor_seq_ref := substr(ref_seq, cryptic_ref_sp - 4, cryptic_ref_sp + 7)]
+vd_cryptic[, cryptic_donor_seq_alt := substr(alt_seq, cryptic_alt_sp - 4, cryptic_alt_sp + 7)]
+
+# exclude any variants at AT donors
+vd_cryptic <- vd_cryptic[substr(authentic_donor_seq_ref, 5, 5) == 'G']
+```
+
+```{r}
+# annotate cryptics with categories - variant affects authentic, cryptic or both
+vd_cryptic[strand == '+', donor_start := authentic_donor_pos - 4]
+vd_cryptic[strand == '-', donor_start := authentic_donor_pos - 7]
+vd_cryptic[strand == '+', donor_end := authentic_donor_pos + 7]
+vd_cryptic[strand == '-', donor_end := authentic_donor_pos + 4]
+
+vd_cryptic[strand == '+', cryptic_donor_start := cryptic_donor_pos - 4]
+vd_cryptic[strand == '-', cryptic_donor_start := cryptic_donor_pos - 7]
+vd_cryptic[strand == '+', cryptic_donor_end := cryptic_donor_pos + 7]
+vd_cryptic[strand == '-', cryptic_donor_end := cryptic_donor_pos + 4]
+
+vd_cryptic[, cryptic_category := find_cryptic_category(authentic_donor_pos, var_start, var_end, donor_start, donor_end,
+                                                       cryptic_donor_start, cryptic_donor_end), by = 1:nrow(vd_cryptic)]
+
+# remove category D variants- beyond scope of this analysis
+remove <- vd_cryptic[cryptic_category == 'D', variant_id]
+vd_cryptic <- vd_cryptic[!variant_id %in% remove]
+
+vd_cryptic[, `:=` (cryptic_donor_start = NULL, cryptic_donor_end = NULL)]
+
+# get distance between variant adn cryptic
+vd_cryptic[, var_dist_from_cryptic := var_dist_from_cryptic(pos, cryptic_donor_pos, strand), by = 1:nrow(vd_cryptic)]
+
+# get distance of cryptic to authentic
+vd_cryptic[strand == '+' , cryptic_distance := cryptic_donor_pos - authentic_donor_pos]
+vd_cryptic[strand == '-' , cryptic_distance := authentic_donor_pos - cryptic_donor_pos]
+
+```
+
+
+```{r}
+# making seperate data frame of unique variant entries - collapse all cryptic information
+# add column with number of cryptics per variant
+vd_cryptic_collapsed <- vd_cryptic[, list(cryptic_sites = paste0(cryptic_sites, collapse=";"),
+                                          cryptic_donor_pos = paste0(cryptic_donor_pos, collapse=";"),
+                                          cryptic_ref_sp = paste0(cryptic_ref_sp, collapse=";"),
+                                          cryptic_alt_sp = paste0(cryptic_alt_sp, collapse=";"),
+                                          cryptic_donor_seq_ref = paste0(cryptic_donor_seq_ref, collapse=";"),
+                                          cryptic_donor_seq_alt = paste0(cryptic_donor_seq_alt, collapse=";"),
+                                          cryptic_category = paste0(cryptic_category, collapse = ";"),
+                                          cryptic_count = .N,
+                                          var_dist_from_cryptic = paste0(var_dist_from_cryptic, collapse=";"),
+                                          cryptic_distance = paste0(cryptic_distance, collapse=";"),
+                                          cryptic_distance_furthest = max(abs(cryptic_distance))), 
+                                   by= c(names(vd_cryptic)[-which(grepl('cryptic',names(vd_cryptic)))])]
+
+
+vd_cryptic_collapsed[, variant_category := annotate_variant_category(cryptic_category), by = 1:nrow(vd_cryptic_collapsed)]
+
+# find position in alt_seq string of the variant start and end - for calculating distance of cryptic in alt sequence
+vd_cryptic_collapsed[, var_start_sp := find_var_start_sp(variant_type, strand, authentic_alt_sp, var_start, var_end, authentic_donor_pos,ref,alt), 
+                     by = 1:nrow(vd_cryptic_collapsed)]
+
+vd_cryptic_collapsed[, var_end_sp := find_var_end_sp(variant_type, strand, authentic_alt_sp, var_start, var_end, authentic_donor_pos,ref,alt), 
+                     by = 1:nrow(vd_cryptic_collapsed)]
+
+
+```
+
+
+
+```{r}
+# finding string position and sequence of all decoys surrounding vd_cryptic donors
+vd_cryptic_collapsed[, decoy_seq := list(list(stri_match_all_regex(alt_seq, regex_donor)[[1]][,2])), by = 1:nrow(vd_cryptic_collapsed)]
+
+vd_cryptic_collapsed[, decoy_sp := list(list(stri_locate_all_regex(alt_seq, regex_donor)[[1]][,1] +
+                                            abs(max_exon_pos))), by = 1:nrow(vd_cryptic_collapsed)]
+
+vd_cryptic_collapsed_decoys <- vd_cryptic_collapsed[, list(decoy_seq = as.character(unlist(decoy_seq)),
+                                                           decoy_sp = as.numeric(unlist(decoy_sp))),
+                                                    by = c(names(vd_cryptic_collapsed)[-which(names(vd_cryptic_collapsed) %in% 
+                                                                                                c('decoy_seq', 
+                                                                                                  'decoy_sp'))])]
+
+
+# remove authentic donors from decoys
+vd_cryptic_collapsed_decoys <- vd_cryptic_collapsed_decoys[decoy_sp != authentic_alt_sp]
+
+# get relative distance of decoy to authentic within the alt sequence (i.e. accounting for any changes in distance caused by indels)
+vd_cryptic_collapsed_decoys[, decoy_distance := decoy_sp - authentic_alt_sp]
+
+# get genomic coordinates of all decoys found
+vd_cryptic_collapsed_decoys[, decoy_genomic_location := find_decoy_gloc(variant_type, strand, authentic_donor_pos, 
+                                                                        decoy_distance, var_start, var_end, authentic_alt_sp, 
+                                                                        decoy_sp, var_start_sp, var_end_sp, ref, alt), 
+                            by = 1:nrow(vd_cryptic_collapsed_decoys)]
+
+# remove decoys outside of boundaries of adjacent exon / intron to authentic donor
+vd_cryptic_collapsed_decoys <- vd_cryptic_collapsed_decoys[between(decoy_genomic_location, region_start, region_end)]
+```
+
+
+```{r}
+# get NIF of decoy in REF sequence
+vd_cryptic_collapsed_decoys[,decoy_ref_ws := ifelse(strand == '+', decoy_genomic_location - 4, decoy_genomic_location - 7)]
+vd_cryptic_collapsed_decoys[,decoy_ref_we := ifelse(strand == '+', decoy_genomic_location + 7, decoy_genomic_location + 4)]
+
+vd_cryptic_collapsed_decoys[, decoy_ref_sp := find_ref_sp(strand, decoy_genomic_location, window_start, window_end), 
+                            by = 1:nrow(vd_cryptic_collapsed_decoys)]
+
+vd_cryptic_collapsed_decoys[,decoy_ref_seq := as.vector(getSeq(x = BSgenome.Hsapiens.1000genomes.hs37d5,
+                                      names = chr,
+                                      start = decoy_ref_ws,
+                                      end = decoy_ref_we,
+                                      strand = strand))]
+```
+
+
+```{r}
+# annotate if 'decoy' is actually the cryptic used
+vd_cryptic_collapsed_decoys[, crossref_col := paste(variant_id,decoy_genomic_location, sep = ':')]
+vd_cryptic[, crossref_col := paste(variant_id,cryptic_donor_pos, sep = ':')]
+vd_cryptic_collapsed_decoys[, donor_category := ifelse(crossref_col %in% vd_cryptic[,crossref_col],
+                                                       'cryptic', 'decoy')]
+
+# annotate resultant exon + intron length if decoy/cryptic is used
+
+vd_cryptic_collapsed_decoys[, resultant_intron_width := calculate_resultant_intron_width(decoy_sp, alt_seq)]
+vd_cryptic_collapsed_decoys[, resultant_exon_width := calculate_resultant_exon_width(decoy_sp)]
+
+# annotate whether that falls outside of the 99th percentile for human intron or exon length - remove if flagged
+vd_cryptic_collapsed_decoys[, resultant_exon_width_flag := ifelse(between(resultant_exon_width, 
+                                                                          quantile(donors$exon_width, c(0.01)), 
+                                                                          quantile(donors$exon_width, c(0.99))), 0,1)]
+vd_cryptic_collapsed_decoys[, resultant_intron_width_flag := ifelse(between(resultant_intron_width, 
+                                                                            quantile(donors$intron_width, c(0.01)), 
+                                                                            quantile(donors$intron_width, c(0.99))), 0,1)]
+
+
+vd_cryptic_collapsed_decoys <- vd_cryptic_collapsed_decoys[(resultant_intron_width_flag == 0) | 
+                                                             donor_category == 'cryptic' ]
+
+# annotate if decoy / cryptic is used naturally in a pre-existing transcript
+vd_cryptic_collapsed_decoys[, preexisting_donor_flag := ifelse(paste(chrom, decoy_genomic_location, sep = ':') %in% donors$donor_id, 1, 0)]
+
+```
+
+
+```{r}
+# add precomputed scores for MES, NNS, SAI and DF
+scores <- fread('../../data/raw/css_database_precomputed_scores.tsv.gz')
+vd_cryptic_collapsed_decoys <- vd_cryptic_collapsed_decoys[scores, on = .(variant_id, decoy_genomic_location)]
+```
+
+
+```{r}
+# remove columns that were required for processing but not analysis
+vd_cryptic_collapsed_decoys[, c('window_start', 'window_end', 'ref_seq', 'alt_seq','donor_start', 
+                                'donor_end', 'crossref_col','donor_id',
+                                names(vd_cryptic_collapsed_decoys)[which(
+                                  grepl('_sp',
+                                        names(vd_cryptic_collapsed_decoys)))]) := NULL]
+
+# reorder columns into 1: donor information, 2: variant information, 3: decoy information
+vd_cryptic_collapsed_decoys <- vd_cryptic_collapsed_decoys[, .(gene_id, tx_id,tx_version_id, strand, intron_width, exon_width, 
+                                                               region_start, region_end, authentic_donor_pos, 
+                                                               # donor information
+                                                               
+                                                               variant_id,source,id,chrom, pos, ref, alt, 
+                                                               var_start, var_end, variant_type,
+                                                               dist_from_donor_start, dist_from_donor_end,
+                                                               authentic_donor_seq_ref, authentic_donor_seq_alt,
+                                                               cryptic_sites,cryptic_donor_seq_ref, cryptic_donor_seq_alt,
+                                                               cryptic_donor_pos,cryptic_category,variant_category,
+                                                               var_dist_from_cryptic,cryptic_distance, cryptic_distance_furthest,
+                                                               cryptic_count, 
+                                                               # variant information
+                                                               
+                                                               decoy_seq,decoy_ref_seq,
+                                                               decoy_distance,decoy_genomic_location,donor_category,
+                                                               resultant_intron_width,resultant_exon_width,
+                                                               resultant_exon_width_flag,resultant_intron_width_flag,
+                                                               preexisting_donor_flag,
+                                                               # decoy information
+                                                               
+                                                               spliceai_authentic_ref, spliceai_authentic_alt,
+                                                               spliceai_decoy_ref, spliceai_decoy_alt,
+                                                               mes_authentic_ref, mes_authentic_alt,
+                                                               mes_decoy_ref, mes_decoy_alt,
+                                                               nnsplice_authentic_ref, nnsplice_authentic_alt,
+                                                               nnsplice_decoy_ref, nnsplice_decoy_alt,
+                                                               median_NIF_pctl_authentic_ref,
+                                                               median_NIF_pctl_authentic_alt,
+                                                               median_NIF_pctl_decoy_alt,
+                                                               median_NIF_pctl_decoy_ref
+                                                               # algorithm predictions
+                                                               )]
+
+```
+
+
+```{r}
+fwrite(vd_cryptic_collapsed_decoys, '../../data/processed/css_database.tsv', sep = '\t')
+system("bgzip -@ 4 ../../data/processed/css_database.tsv")
+```
+
+

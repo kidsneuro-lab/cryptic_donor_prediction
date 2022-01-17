@@ -1,0 +1,263 @@
+---
+title: "R Notebook"
+output:
+---
+
+
+```{r}
+library(tidyverse)
+library(data.table)
+library(TRAMPR)
+library(ggseqlogo)
+library(ggpubr)
+library(ggsci)
+library(BSgenome.Hsapiens.1000genomes.hs37d5)
+theme_set(theme_classic())
+library(ggpmisc)
+library(Rfast)
+library(caret)
+library(scales)
+library(GGally)
+library(gridExtra)
+library(patchwork)
+```
+
+```{r}
+css_db <- fread('../../data/processed/css_database.tsv')
+```
+
+
+```{r}
+# CSS database basic stats - 
+
+data.table(genes = length(unique(css_db$gene_id)),
+           variants = length(unique(css_db$variant_id)),
+           cryptics = nrow(css_db[donor_category == 'cryptic']),
+           decoys = nrow(css_db[donor_category == 'decoy']))
+
+# number of variants from each source
+distinct(css_db[, .(variant_id, source)]) %>% group_by(source) %>% tally()
+
+# number of each variant type (DEL, INS, SNP)
+distinct(css_db[,.(variant_id, variant_type) ]) %>% group_by(variant_type) %>% tally()
+
+# numbers of each cryptic type (A,B,C)
+distinct(css_db[, 1:81]) %>% separate_rows(contains('cryptic'), sep = '\\;') %>%
+  group_by(cryptic_category) %>% tally()
+
+# numbers of each variant type (A,B,C)
+distinct(css_db[, 1:81])  %>%
+  group_by(variant_category) %>% tally()
+
+
+```
+
+# Figure 1Ci
+
+```{r}
+# variant positions- AM 
+
+css_db[, dist_from_donor := as.numeric(absolute.min(c(dist_from_donor_start, 
+                                           dist_from_donor_end))), by = 1:nrow(css_db)]
+
+pos_dict <- data.table(dist_from_donor = c(-4:-1, 1:8),
+                       varpos = c('E4','E3','E2','E1','D1','D2',
+                                  'D3','D4','D5','D6','D7','D8'))
+
+css_db <- pos_dict[css_db, on = .(dist_from_donor)]
+
+dd <- distinct(css_db[variant_category == 'A' & variant_type != 'DEL', .(variant_id, varpos, variant_type)]) %>%
+  group_by(varpos) %>% tally() %>%
+  mutate(varpos = factor(varpos, levels = c('E4','E3','E2','E1','D1','D2','D3','D4','D5','D6','D7','D8'))) %>%
+  ggplot(aes(x = varpos, y = n)) +
+  geom_bar(stat = 'identity', fill="#cf5300", alpha = 0.8) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), 
+        legend.position = 'none') +
+  geom_text(aes(label = n), vjust = -0.1) + xlab("variant position") +
+  ylab('variant count') + 
+  scale_y_continuous(expand = c(0,0), limits = c(0, 730))+ ggtitle('SNPs and Insertions')
+```
+
+# Figure 1Cii
+
+```{r}
+#del positions- AM & CM varinats
+dels <- distinct(css_db[variant_type=='DEL' & variant_category != 'B', .(variant_id, dist_from_donor_start, dist_from_donor_end, variant_category)]) %>%
+  arrange(variant_category, dist_from_donor_start) %>%
+  group_by(variant_category) %>%
+  mutate(counting = 1, 
+         order = cumsum(counting),
+         adj = max(order) + 1) %>%
+  mutate(order = adj - order) %>% setDT()
+
+
+varpos_delA <- ggplot(dels[variant_category == 'A'], aes(x = dist_from_donor_start, y = 1:nrow(A_dels), color = variant_category)) + 
+  geom_segment(aes(x = dist_from_donor_start, xend = dist_from_donor_end,
+                  y = order, yend = order), size= 1, alpha = 0.8) + ylab('variant count') + xlab('Deletion position') +
+  theme(legend.position = 'none') + ggtitle('Deletions') +
+  geom_vline(xintercept = -4, linetype = 'dotted') + geom_vline(xintercept = 8, linetype = 'dotted') + 
+  scale_color_manual(values = c('#cf5300')) 
+```
+
+# Figure 1Ciii
+
+```{r}
+# number of cryptic splice sites per variant- AM-variants
+ccount <-  css_db[variant_category == 'A' & donor_category == 'cryptic'] %>%
+  group_by(variant_id) %>% tally() %>% ungroup() %>% 
+  mutate(n = ifelse(n >= 3, '>=3', n) )%>% group_by(n) %>% tally()  %>%
+  mutate(n = factor(n, levels = c('1', '2', '>=3'))) %>%
+  ggplot(aes(x = n, y = nn)) +
+  geom_bar(stat = 'identity', fill="#cf5300", alpha = 0.8) +
+  ylab('variant count') + xlab("Number of cryptic 5'SS")  +
+  geom_text(aes(label = nn), vjust = -0.2) + 
+  scale_y_continuous(expand = c(0,0), limits = c(0, 2100))
+```
+
+# Figure 1Di
+
+```{r}
+pos_dict2 <- data.table(var_dist_from_cryptic = c(-4:-1, 1:8),
+                       varpos_cryp = c('E4','E3','E2','E1','D1','D2','D3','D4','D5','D6','D7','D8'))
+
+
+cc <- distinct(css_db[variant_category == 'B' & variant_type != 'DEL', .(variant_id, var_dist_from_cryptic)]) %>%
+  separate_rows(var_dist_from_cryptic, sep = ';')  %>%
+  mutate(var_dist_from_cryptic = as.numeric(var_dist_from_cryptic)) %>%
+  left_join(pos_dict2, by = 'var_dist_from_cryptic') %>%
+  group_by(varpos_cryp) %>% tally() %>%
+  mutate(varpos_cryp = factor(varpos_cryp, levels = c('E4','E3','E2','E1','D1','D2','D3','D4','D5','D6','D7','D8'))) %>%
+  ggplot(aes(x = varpos_cryp, y = n)) +
+  geom_bar(stat = 'identity', fill = c('dark green'), alpha = 0.8) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), 
+        legend.position = 'none') +
+  geom_text(aes(label = n), vjust = -0.1) + xlab("variant position") +  
+  ylab('variant count') + 
+  scale_y_continuous(expand = c(0,0), limits = c(0, 870)) + ggtitle('SNPs and Insertions')
+```
+
+
+# Figure 1Dii
+```{r}
+# CM +2 vars- ES change counts
+
+ES_change <- css_db[variant_category == 'B' &  donor_category == 'cryptic' & variant_type == 'SNP'] %>%
+  dplyr::select(variant_id, var_dist_from_cryptic, cryptic_donor_seq_ref, cryptic_donor_seq_alt) %>%
+  separate_rows(var_dist_from_cryptic, cryptic_donor_seq_ref, cryptic_donor_seq_alt, sep = ';')  %>%
+  mutate(var_dist_from_cryptic = as.numeric(var_dist_from_cryptic)) %>% distinct() %>%
+  mutate(decoy_ES_ref = ifelse(var_dist_from_cryptic == 2, substr(cryptic_donor_seq_ref, 5,6), 'other'),
+         decoy_ES_var = ifelse(var_dist_from_cryptic == 2, substr(cryptic_donor_seq_alt, 5, 6), 'other'),
+         decoy_ES_change = ifelse(var_dist_from_cryptic == 2 & 
+                                    decoy_ES_ref != decoy_ES_var, 
+                                  paste('+2\n',paste(decoy_ES_ref, decoy_ES_var, sep = '>')), 'other'))  %>%
+  mutate(var_dist_from_cryptic = ifelse(decoy_ES_change == 'other', 'other', var_dist_from_cryptic))%>%
+  group_by(var_dist_from_cryptic, decoy_ES_change) %>% tally()  %>%
+  arrange(-n) %>% setDT()
+
+ES_change[, decoy_ES_change := factor(decoy_ES_change, levels = ES_change$decoy_ES_change)]
+ES_change[, var_dist_from_cryptic := factor(var_dist_from_cryptic, levels = c('other', '2'))]
+
+
+es_change <- ggplot(ES_change, aes(x = decoy_ES_change, y = n)) + 
+  geom_bar(stat = 'identity', fill = c('dark green'), alpha = 0.8)  +
+  #xlab('Cryptic Modified variants') + 
+  xlab('') + ylab('count')+
+  geom_text(aes(label = n), vjust = -0.1) +theme(legend.position = 'none') +
+  scale_y_continuous(expand = c(0,0)) +coord_cartesian(ylim = c(0, 1530))
+
+```
+
+
+# Figure 1Ei
+
+```{r}
+# variant positions - AM/CM variants
+ds <- distinct(css_db[variant_category == 'C' & variant_type != 'DEL', 
+                      .(variant_id, cryptic_category, var_dist_from_cryptic)]) %>%
+  separate_rows(cryptic_category, var_dist_from_cryptic, sep = ';')  %>%
+  filter(cryptic_category == 'C') %>%
+  mutate(var_dist_from_cryptic = as.numeric(var_dist_from_cryptic)) %>%
+  left_join(pos_dict2, by = 'var_dist_from_cryptic') %>%
+  group_by(varpos_cryp) %>% tally() %>%
+  mutate(varpos_cryp = factor(varpos_cryp, 
+                              levels = c('E4','E3','E2','E1','D1','D2','D3','D4','D5','D6','D7','D8'))) %>%
+  ggplot(aes(x = varpos_cryp, y = n)) +
+  geom_bar(stat = 'identity', fill = c('#000080'), alpha = 0.8) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), 
+        legend.position = 'none') +
+  geom_text(aes(label = n), vjust = -0.1) + xlab("variant position") +
+  ylab('variant count') + 
+  scale_y_continuous(expand = c(0,0)) + ggtitle('SNPs and Insertions') + 
+  coord_cartesian(ylim = c(0, 135))
+```
+
+
+
+# Figure 1Eii
+```{r}
+# AM/CM +2 vars- ES change counts
+
+ES_change_C <- css_db[variant_category == 'C' &  donor_category == 'cryptic'& variant_type == 'SNP'] %>%
+  dplyr::select(variant_id, var_dist_from_cryptic, cryptic_donor_seq_ref, cryptic_donor_seq_alt, cryptic_category)%>%
+  separate_rows(var_dist_from_cryptic, cryptic_donor_seq_ref, cryptic_donor_seq_alt, cryptic_category, sep = ';') %>%
+  mutate(var_dist_from_cryptic = as.numeric(var_dist_from_cryptic)) %>%
+  filter(cryptic_category == 'C') %>% distinct() %>%
+  mutate(decoy_ES_ref = ifelse(var_dist_from_cryptic == 2, substr(cryptic_donor_seq_ref, 5,6), 'other'),
+         decoy_ES_var = ifelse(var_dist_from_cryptic == 2, substr(cryptic_donor_seq_alt, 5, 6), 'other'),
+         decoy_ES_change = ifelse(var_dist_from_cryptic == 2 & 
+                                    decoy_ES_ref != decoy_ES_var, 
+                                  paste('+2\n',paste(decoy_ES_ref, decoy_ES_var, sep = '>')), 'other'))  %>%
+  mutate(var_dist_from_cryptic = ifelse(decoy_ES_change == 'other', 'other', var_dist_from_cryptic))%>%
+  group_by(var_dist_from_cryptic, decoy_ES_change) %>% tally()  %>%
+  arrange(-n) %>% setDT()
+
+ES_change_C[, decoy_ES_change := factor(decoy_ES_change, levels = ES_change_C$decoy_ES_change)]
+
+es_change_C <- ggplot(ES_change_C, aes(x = decoy_ES_change, y = n)) + 
+  geom_bar(stat = 'identity', fill = '#000080', alpha = 0.8)  +
+  #xlab('Authentic Modified and \n Cryptic Modified variants') + 
+  xlab('')+ ylab('count')+
+  geom_text(aes(label = n), vjust = -0.1) +theme(legend.position = 'none') +
+  scale_y_continuous(expand = c(0,0)) + coord_cartesian(ylim = c(0, 260))
+
+```
+
+# Figure 1Eiii
+
+```{r}
+varpos_delC <- ggplot(dels[variant_category == 'C'], aes(x = dist_from_donor_start, y = 1:nrow(A_dels), color = variant_category)) + 
+  geom_segment(aes(x = dist_from_donor_start, xend = dist_from_donor_end,
+                  y = order, yend = order), size= 3.5, alpha = 0.8) + ylab('variant count') + xlab('Deletion position') +
+  theme(legend.position = 'none') + ggtitle('Deletions') +
+  geom_vline(xintercept = -4, linetype = 'dotted') + geom_vline(xintercept = 8, linetype = 'dotted') + 
+  scale_color_manual(values = c('#000080')) 
+
+```
+
+
+
+```{r}
+
+
+panelAii <- ggarrange(varpos_delA, ccount, ncol = 2)
+
+
+panelA <- grid.arrange(dd, panelAii, 
+                       top =grid::textGrob('Authentic Modified (AM)', x = 0.05,  hjust = 0),ncol = 2, widths = c(1, 1.5))
+
+panelB <- grid.arrange(cc, es_change,plot_spacer(),
+                       top =grid::textGrob('Cryptic Modified (CM)', x = 0.05,  hjust = 0),ncol = 3, widths = c(1.5, 1.2, 1))
+
+panelCii <- ggarrange(es_change_C, varpos_delC, ncol = 2)
+
+
+panelC <- grid.arrange(ds, panelCii, top =grid::textGrob('Authentic Modified/Cryptic Modified (AM/CM)', x = 0.05,  hjust = 0),
+                       ncol = 2, widths = c(1, 1.5))
+
+ggarrange(panelA, panelB , panelC, ncol = 1)
+
+
+
+ggsave('../figures/figure_1.pdf', width = 11, height = 9)
+```
+

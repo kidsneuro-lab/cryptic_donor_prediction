@@ -1,0 +1,224 @@
+---
+title: "R Notebook"
+output: 
+---
+
+```{r}
+library(data.table)
+library(tidyverse)
+library(expss)
+library(patchwork)
+```
+
+# Figure S1A
+
+```{r}
+hg19_introns <- fread('../../data/ref/ensembl75_canonical_introns.tsv')
+hg19_introns[, donor_pos := ifelse(strand == '+', start, end)]
+```
+
+```{r}
+window_length = 150
+hg19_introns[,`:=`(window_start = donor_pos - window_length,
+                   window_end = donor_pos + window_length)]
+
+#Getting hg19 sequence between these genomic coordinates
+hg19_introns[,window_seq := as.vector(getSeq(x = BSgenome.Hsapiens.1000genomes.hs37d5,
+                                             names = chrom,
+                                             start = window_start,
+                                             end = window_end,
+                                             strand = strand))]
+
+hg19_introns <- hg19_introns[!grepl('NN', window_seq)]
+hg19_introns[, donor_id := paste(chrom,donor_pos, sep = ':')]
+
+```
+
+
+```{r}
+window_names <- function(location, window_length) {
+  name = NA
+  if (location <=  -window_length) {
+    name = paste0('E',abs(location),'-E', abs(location) - (window_length - 1))
+  } else if (location %in% c(- (window_length - 1):-1)) {
+    name = paste0('E',abs(location),'-D', location + window_length)
+  } else if (location > 0) {
+    name = paste0('D',abs(location),'-D', location + window_length)
+  }
+  return(name)
+}
+window_names <- Vectorize(window_names)
+
+```
+
+
+```{r}
+# 6nt
+hg19_introns[,sixnt_windows :=
+               lapply(window_seq, function(x)
+                 stri_match_all_regex(x ,"(?=([A-Z]{6}))")[[1]][,2]) ]
+
+sixnt_valley <- hg19_introns[, .(donor_id, sixnt_windows)]
+sixnt_valley <- sixnt_valley[, list(sixnt_windows = as.character(unlist(sixnt_windows))), by = list(donor_id)]
+sixnt_valley[, location := rep(c(-150:-1, 1:146), nrow(hg19_introns))]
+sixnt_valley <- sixnt_valley %>% group_by(location) %>%
+  dplyr::summarise(introns = n(),
+                   unique_seq = n_distinct(sixnt_windows)) %>% setDT()
+sixnt_valley[, color := ifelse(location %in% c(-4:1), 1, 0)]
+sixnt_valley[, name := window_names(location, 6)]
+sixnt_valley[, name := factor(name, levels = sixnt_valley$name)]
+
+labels = c(as.character(sixnt_valley[location %in% c(seq(-15,-6, 5), c(-4,-1)), name]), 
+  '',
+  as.character(sixnt_valley[location %in% c(seq(10,15,5)), name]))
+
+
+sixnt <- ggplot(sixnt_valley[location %in% seq(-15, 15, 1)], aes(x = name, y = unique_seq, fill = factor(color))) +
+  geom_bar(stat = "identity")  + xlab( 'Location' ) + theme_classic() + 
+  theme(axis.text.x = element_text(size = 10, angle = 45, hjust = 1), legend.position = 'none') +
+  scale_x_discrete(breaks =labels,labels = labels, expand = c(0, 0)) +
+  scale_y_continuous(expand = c(0,0))+ 
+  scale_fill_manual(values = c('grey', 'black')) + xlab('6nt windows') + ylab('unique combinations\nin hg19')
+
+```
+
+```{r}
+# 7nt
+hg19_introns[,sevennt_windows :=
+               lapply(window_seq, function(x)
+                 stri_match_all_regex(x ,"(?=([A-Z]{7}))")[[1]][,2]) ]
+
+sevennt_valley <- hg19_introns[, .(donor_id, sevennt_windows)]
+sevennt_valley <- sevennt_valley[, list(sevennt_windows = as.character(unlist(sevennt_windows))), by = list(donor_id)]
+sevennt_valley[, location := rep(c(-150:-1, 1:(150 - 7 +2)), nrow(hg19_introns))]
+sevennt_valley <- sevennt_valley %>% group_by(location) %>%
+  dplyr::summarise(introns = n(),
+                   unique_seq = n_distinct(sevennt_windows)) %>% setDT()
+sevennt_valley[, color := ifelse(location %in% c(-4:1), 1, 0)]
+sevennt_valley[, name := window_names(location, 7)]
+sevennt_valley[, name := factor(name, levels = sevennt_valley$name)]
+
+labels = c(as.character(sevennt_valley[location %in% c(seq(-15,-6, 5), c(-4,-1)), name]), 
+  '',
+  as.character(sevennt_valley[location %in% c(seq(10,15,5)), name]))
+
+
+sevennt <- ggplot(sevennt_valley[location %in% seq(-15, 15, 1)], aes(x = name, y = unique_seq, fill = factor(color))) +
+  geom_bar(stat = "identity")  + xlab( 'Location' ) + theme_classic() + 
+  theme(axis.text.x = element_text(size = 10, angle = 45, hjust = 1), legend.position = 'none') +
+  scale_x_discrete(breaks =labels,labels = labels, expand = c(0, 0)) +
+  scale_y_continuous(expand = c(0,0))+ 
+  scale_fill_manual(values = c('grey','black')) + xlab('7nt windows') + ylab('unique combinations\nin hg19')
+
+```
+
+
+
+```{r}
+# 8nt
+hg19_introns[,eightnt_windows :=
+               lapply(window_seq, function(x)
+                 stri_match_all_regex(x ,"(?=([A-Z]{8}))")[[1]][,2]) ]
+
+eightnt_valley <- hg19_introns[, .(donor_id, eightnt_windows)]
+eightnt_valley <- eightnt_valley[, list(eightnt_windows = as.character(unlist(eightnt_windows))), by = list(donor_id)]
+eightnt_valley[, location := rep(c(-150:-1, 1:(150 - 8 +2)), nrow(hg19_introns))]
+eightnt_valley <- eightnt_valley %>% group_by(location) %>%
+  dplyr::summarise(introns = n(),
+                   unique_seq = n_distinct(eightnt_windows)) %>% setDT()
+eightnt_valley[, color := ifelse(location %in% c(-4:1), 1, 0)]
+eightnt_valley[, name := window_names(location, 8)]
+eightnt_valley[, name := factor(name, levels = eightnt_valley$name)]
+
+labels = c(as.character(eightnt_valley[location %in% c(seq(-15,-6, 5), c(-4,-1)), name]), 
+  '',
+  as.character(eightnt_valley[location %in% c(seq(10,15,5)), name]))
+
+
+eightnt <- ggplot(eightnt_valley[location %in% seq(-15, 15, 1)], aes(x = name, y = unique_seq, fill = factor(color))) +
+  geom_bar(stat = "identity")  + xlab( 'Location' ) + theme_classic() + 
+  theme(axis.text.x = element_text(size = 10, angle = 45, hjust = 1), legend.position = 'none') +
+  scale_x_discrete(breaks =labels,labels = labels, expand = c(0, 0)) +
+  scale_y_continuous(expand = c(0,0))+ 
+  scale_fill_manual(values = c('grey','black')) + xlab('8nt windows') + ylab('unique combinations\nin hg19')
+
+```
+
+```{r}
+# 10nt
+hg19_introns[,tennt_windows :=
+               lapply(window_seq, function(x)
+                 stri_match_all_regex(x ,"(?=([A-Z]{10}))")[[1]][,2]) ]
+
+tennt_valley <- hg19_introns[, .(donor_id, tennt_windows)]
+tennt_valley <- tennt_valley[, list(tennt_windows = as.character(unlist(tennt_windows))), by = list(donor_id)]
+tennt_valley[, location := rep(c(-150:-1, 1:(150 - 10 +2)), nrow(hg19_introns))]
+tennt_valley <- tennt_valley %>% group_by(location) %>%
+  dplyr::summarise(introns = n(),
+                   unique_seq = n_distinct(tennt_windows)) %>% setDT()
+tennt_valley[, color := ifelse(location %in% c(-4:1), 1, 0)]
+tennt_valley[, name := window_names(location, 10)]
+tennt_valley[, name := factor(name, levels = tennt_valley$name)]
+
+labels = c(as.character(tennt_valley[location %in% c(seq(-15,-6, 5), c(-4,-1)), name]), 
+  '',
+  as.character(tennt_valley[location %in% c(seq(10,15,5)), name]))
+
+
+tennt <- ggplot(tennt_valley[location %in% seq(-15, 15, 1)], aes(x = name, y = unique_seq, fill = factor(color))) +
+  geom_bar(stat = "identity")  + xlab( 'Location' ) + theme_classic() + 
+  theme(axis.text.x = element_text(size = 10, angle = 45, hjust = 1), legend.position = 'none') +
+  scale_x_discrete(breaks =labels,labels = labels, expand = c(0, 0)) +
+  scale_y_continuous(expand = c(0,0))+ 
+  scale_fill_manual(values = c('grey','black')) + xlab('10nt windows') + ylab('unique combinations\nin hg19')
+
+```
+
+```{r}
+supp_valleys <- ggarrange(sixnt, sevennt, eightnt, tennt, ncol = 2, nrow = 2)
+```
+
+# Figure S1B
+
+```{r}
+hg19_introns[,ninent_windows :=
+               lapply(window_seq, function(x)
+                 stri_match_all_regex(x ,"(?=([A-Z]{9}))")[[1]][,2]) ]
+
+ninent_valley <- hg19_introns[, .(donor_id, ninent_windows)]
+ninent_valley <- ninent_valley[, list(ninent_windows = as.character(unlist(ninent_windows))), by = list(donor_id)]
+ninent_valley[, location := rep(c(-150:-1, 1:143), nrow(hg19_introns))]
+ninent_valley <- ninent_valley %>% group_by(location) %>%
+  dplyr::summarise(introns = n(),
+                   unique_seq = n_distinct(ninent_windows)) %>% setDT()
+ninent_valley[, color := ifelse(location %in% c(-4:-1), 1, 0)]
+
+ninent_valley[, name := window_names(location, 9)]
+ninent_valley[, name := factor(name, levels = ninent_valley$name)]
+
+labels = c(as.character(ninent_valley[location %in% c(seq(-15,-6, 5), c(-4:-1)), name]), 
+  '',
+  as.character(ninent_valley[location %in% c(seq(0,15,5)), name]))
+
+
+ninent <- ggplot(ninent_valley[location %in% seq(-15, 15, 1)], aes(x = name, y = unique_seq, fill = factor(color))) +
+  geom_bar(stat = "identity")  + xlab( 'Location' ) + theme_classic() + 
+  theme(axis.text.x = element_text(size = 10, angle = 45, hjust = 1), legend.position = 'none') +
+  scale_x_discrete(breaks =labels,labels = labels, expand = c(0, 0)) +
+  scale_y_continuous(expand = c(0,0))+ 
+  scale_fill_manual(values = c('grey','black')) + xlab('9nt windows') + ylab('unique combinations in hg19')
+
+```
+
+
+```{r}
+bottom <- ggarrange(ninent, plot_spacer(), nrow = 1)
+ggarrange(supp_valleys, bottom, nrow = 2, heights = c(2, 1))
+ggsave('../figures/figure_s1.pdf', width = 8.5, height = 4.5)
+```
+
+
+
+
+
+

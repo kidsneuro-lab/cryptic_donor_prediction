@@ -1,0 +1,525 @@
+---
+title: "R Notebook"
+output: 
+---
+
+```{r echo = F, setup = T}
+library(tidyverse)
+library(data.table)
+library(BSgenome.Hsapiens.1000genomes.hs37d5)
+library(stringi)
+theme_set(theme_classic())
+library(ggplot2)
+library(ggpubr)
+library(patchwork)
+library(expss)
+library(Rfast)
+library(ggseqlogo)
+source('../../utils.R')
+```
+
+```{r}
+css_db <- fread('../../data/processed/css_database_predictions.tsv.gz')
+```
+
+
+# AM
+
+--- AM ---
+
+# Figure 3Ai
+```{r}
+# AM delta authentic
+# Get labels
+data <- css_db[variant_category == 'A'] %>% 
+  dplyr::select(variant_id, contains('delta_authentic_cat')) %>% distinct() %>%
+  pivot_longer(cols = contains('delta_authentic')) %>%
+  mutate(name = gsub('_delta_authentic_cat','', name)) %>%
+  mutate(name = gsub('mes', 'MES', name),
+         name = gsub('nnsplice', 'NNS', name),
+         name = gsub('spliceai', 'SAI', name),
+         name = gsub('median_NIF_pctl', 'DF', name)) %>% 
+  mutate(name = factor(name, levels = c('NNS', 'MES', 'SAI', 'DF')))%>% 
+  mutate(value = factor(value, levels = c("weaker by >50%", 
+                                          "weaker by 10-50%", "similar (+/- 10%)" ,
+                                          "stronger by >10%", "authentic REF not recognised")))
+
+percentData <- data  %>% group_by(name, value) %>% tally() %>%
+  mutate(ratio=scales::percent(n/sum(n), accuracy = 1)) %>%  
+  mutate(ratio = ifelse(as.numeric(gsub('%', '', ratio)) < 5, '', ratio))
+
+AM_deltaAuthentic <- data%>%
+  ggplot(aes(x = name, fill = value)) + geom_bar(position = 'fill', width = 0.6) +
+  scale_fill_manual(values = c('#0E76A1', '#2DB5ED', '#F0C100', '#EB9E00', 'grey')) +
+  scale_y_continuous(expand = c(0,0))+
+  geom_text(data=percentData, aes(y=n,label=ratio), 
+            position=position_fill(vjust=0.5), color = 'black') + labs(y = '', x = '', fill = '')+
+  ggtitle(paste0('Δ Authentic (n = ', nrow(data) / 4, ')'))+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = 'bottom') 
+
+percentDataAM <- percentData
+```
+
+
+
+# FIgure 3Aii
+```{r}
+# example variant
+am_egplot_data <-rbind(distinct(css_db[variant_category == 'A' & variant_id == 'b27c39079f3a770b6f05fa2716bd0a18', 
+                      .(decoy_distance = 0, donor_category = 'authentic', median_NIF_pctl_authentic_ref,median_NIF_pctl_authentic_alt)]) %>%
+        pivot_longer(contains('median'), values_to = 'median_NIF_pctl_decoy_alt') %>% 
+        mutate(name = gsub('median_NIF_pctl_authentic_', '', name)) %>%
+        unite('donor_category', donor_category:name),
+      css_db[variant_category == 'A' & variant_id == 'b27c39079f3a770b6f05fa2716bd0a18', 
+             .(decoy_distance, median_NIF_pctl_decoy_alt, donor_category)]) %>% setDT()
+
+am_egplot_data[grepl('authentic',donor_category), color := 'grey']
+
+am_egplot_data[median_NIF_pctl_decoy_alt > am_egplot_data[donor_category == 'authentic_alt',median_NIF_pctl_decoy_alt], 
+               color := 'DF > Authentic VAR']
+am_egplot_data[median_NIF_pctl_decoy_alt <= am_egplot_data[donor_category == 'authentic_alt',median_NIF_pctl_decoy_alt], 
+               color := 'DF <= authentic VAR']
+am_egplot_data[median_NIF_pctl_decoy_alt == 0.000001000, color := 'DF = 0']
+am_egplot_data[, shape := ifelse(donor_category == 'cryptic',1,0)]
+
+AM_egplot <- ggplot(am_egplot_data,aes(x = decoy_distance,y = median_NIF_pctl_decoy_alt, color = color)) +
+  geom_vline(xintercept = 0, linetype = 'dashed')  +
+  geom_vline(xintercept = -64, linetype = 'dashed', color = 'grey') + 
+  geom_point(size = 1.5) +
+  scale_color_manual(values = c('#0E76A1','grey','#EB9E00')) +
+  labs(y = 'DF', x = "Distance from Authentic donor", color = '') +
+  scale_x_continuous(breaks = seq(-300, 300,50), 
+                     labels = function(x) ifelse(x>0, paste0('+', x), x)) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = 'bottom') 
+
+```
+
+# Figure 3Aiii
+```{r}
+# AM cryptic authentic
+data <- css_db[variant_category == 'A' & donor_category == 'cryptic'] %>% 
+  dplyr::select(variant_id,decoy_genomic_location,  contains('decoy_authentic_cat')) %>% distinct() %>%
+  pivot_longer(cols = contains('decoy_authentic_cat')) %>%
+  mutate(name = gsub('_decoy_authentic_cat','', name)) %>%
+  mutate(name = gsub('mes', 'MES', name),
+         name = gsub('nnsplice', 'NNS', name),
+         name = gsub('spliceai', 'SAI', name),
+         name = gsub('median_NIF_pctl', 'DF', name)) %>% 
+  mutate(name = factor(name, levels = c('NNS', 'MES','SAI', 'DF'))) %>% 
+  mutate(value = factor(value, levels = c('cryptic VAR not recognised', "weaker by >50%", 
+                                          "weaker by 10-50%", "similar (+/- 10%)" ,
+                                          "stronger by >10%", "authentic ALT zero")))
+
+percentData <- data  %>%
+  mutate(value = gsub(' by >50%| by 10-50%| by >10%', '', value))  %>% group_by(name, value) %>% tally() %>%
+  mutate(ratio=n/sum(n))  %>%
+  filter(value %in% c('cryptic VAR not recognised', "weaker", "stronger")) %>% setDT()
+
+
+stronger <- ggplot(percentData[value == 'stronger'], aes(x = name, y = ratio)) + 
+  geom_bar(stat = 'identity', width = 0.6, fill = '#EB9E00')  +
+  geom_text(aes(y=ratio,label=scales::percent(ratio, accuracy = 1)), color = 'black', vjust = -1, size = 3)+
+  scale_y_continuous(expand = expansion(mult = c(0, .2)), labels = scales::percent) + 
+  ylab("AM cryptics\nthat are stronger\nthan authentic VAR (%)") + xlab('')+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) 
+
+```
+
+# Figure 3Aiv
+
+```{r}
+# -	what %age of cryptics are not the strongest decoy w/in 250nt
+css_db[, strongest := ifelse(median_NIF_pctl_decoy_alt == max(median_NIF_pctl_decoy_alt), 1, 0), 
+       by = .(variant_id, authentic_donor_pos)]
+
+DF <-  distinct(css_db[variant_category == 'A' & donor_category == 'cryptic', 
+                       .(variant_id, authentic_donor_pos, 
+                         decoy_genomic_location, donor_category, strongest)])  %>%
+  group_by(strongest) %>% tally() %>%
+  mutate(perc = n /sum(n)) %>% mutate(alg = 'DF') %>% filter(strongest ==0)
+
+
+css_db[, strongest_MES := ifelse(mes_decoy_alt == max(mes_decoy_alt), 1, 0), 
+       by = .(variant_id, authentic_donor_pos)]
+
+MES <- distinct(css_db[variant_category == 'A' & donor_category == 'cryptic', 
+                       .(variant_id, authentic_donor_pos, 
+                         decoy_genomic_location, donor_category, strongest = strongest_MES)]) %>%
+  group_by(strongest) %>% tally() %>%
+  mutate(perc = n /sum(n)) %>% mutate(alg = 'MES') %>% filter(strongest ==0)
+
+css_db[, strongest_NNS := ifelse(nnsplice_decoy_alt == max(nnsplice_decoy_alt), 1, 0), 
+       by = .(variant_id, authentic_donor_pos)]
+
+NNS <- distinct(css_db[variant_category == 'A' & donor_category == 'cryptic', 
+                       .(variant_id, authentic_donor_pos, 
+                         decoy_genomic_location, donor_category, strongest = strongest_NNS)]) %>%
+  group_by(strongest) %>% tally() %>%
+  mutate(perc = n /sum(n)) %>% mutate(alg = 'NNS') %>% filter(strongest ==0)
+
+css_db[, strongest_SAI := ifelse(spliceai_decoy_alt == max(spliceai_decoy_alt), 1, 0), 
+       by = .(variant_id, authentic_donor_pos)]
+
+SAI <- distinct(css_db[variant_category == 'A' & donor_category == 'cryptic', 
+                       .(variant_id, authentic_donor_pos, 
+                         decoy_genomic_location, donor_category, strongest = strongest_SAI)]) %>%
+  group_by(strongest) %>% tally() %>%
+  mutate(perc = n /sum(n)) %>% mutate(alg = 'SAI') %>% filter(strongest ==0)
+
+
+not_strongest <- rbind(DF, MES, NNS, SAI) %>%
+  mutate(alg = factor(alg, levels = c('NNS', 'MES', 'SAI', 'DF'))) %>%
+  ggplot(aes(x = alg, y = perc)) + geom_bar(stat = 'identity',fill = '#0E76A1', width = 0.6) +
+  scale_y_continuous(expand = expansion(mult = c(0, .2)), labels = scales::percent) +
+  geom_text(aes(label = scales::percent(perc, accuracy = 1)), vjust = -0.1, size = 3) + 
+  coord_cartesian(ylim = c(0, 0.65)) + 
+  ylab("AM cryptics that\nare not strongest (%)") + xlab('')+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) 
+
+```
+
+
+# Figure 3Av
+```{r}
+nrec <- ggplot(percentData[value == 'cryptic VAR not recognised'], aes(x = name, y = ratio)) + 
+  geom_bar(stat = 'identity', width = 0.6, fill = 'grey') +
+  geom_text(aes(y=ratio,label=scales::percent(ratio, accuracy = 1)), color = 'black', vjust = -1, size = 3)+
+  scale_y_continuous(expand = expansion(mult = c(0, .2)), labels = scales::percent) + 
+  ylab("AM cryptics that\nare not recognised (%)") + xlab('')+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) 
+```
+
+
+
+# CM : delta cryptic, cryptic vs authentic
+--- CM ---
+
+# Figure 3Bi
+
+
+```{r}
+# CM delta cryptic
+
+data <- css_db[variant_category == 'B' & donor_category == 'cryptic'] %>% 
+  dplyr::select(variant_id, decoy_genomic_location, contains('delta_decoy_cat')) %>% distinct() %>%
+  pivot_longer(cols = contains('delta_decoy_cat')) %>%
+  mutate(name = gsub('_delta_decoy_cat','', name)) %>%
+  mutate(name = gsub('mes', 'MES', name),
+         name = gsub('nnsplice', 'NNS', name),
+         name = gsub('spliceai', 'SAI', name),
+         name = gsub('median_NIF_pctl', 'DF', name))  %>% 
+  mutate(value = factor(value, levels = c('cryptic VAR not recognised', "weaker by >50%", 
+                                          "weaker by 10-50%", "similar (+/- 10%)" ,"stronger by >10%"))) %>%
+  mutate(name = factor(name, levels = c('NNS', 'MES', 'SAI', 'DF')))
+
+
+percentData <- data  %>% group_by(name, value) %>% tally() %>%
+  mutate(ratio=scales::percent(n/sum(n), accuracy = 1)) %>%   mutate(ratio = ifelse(as.numeric(gsub('%', '', ratio)) < 5, '', ratio))
+
+CM_deltaCryptic <- data%>%
+  ggplot(aes(x = name, fill = value)) + geom_bar(position = 'fill', width = 0.6) +
+  scale_fill_manual(values = c('grey', '#0E76A1', '#2DB5ED', '#F0C100', '#EB9E00')) +
+  scale_y_continuous(expand = c(0,0))+
+  geom_text(data=percentData, aes(y=n,label=ratio), 
+            position=position_fill(vjust=0.5), color = 'black') + labs(y = '', x = '', fill = '')+
+  ggtitle(paste0('Δ Cryptic (n = ', nrow(data) / 4, ')'))+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = 'bottom') 
+```
+
+# Figure 3Bii
+
+```{r}
+# example variant
+authentic <- distinct(css_db[variant_category == 'B' & 
+                               variant_id == '17bccd9410b572586b23c922c96bc1ae', 
+                      .(decoy_distance = 0, donor_category = 'authentic', median_NIF_pctl_authentic_alt)]) %>%
+        pivot_longer(contains('median')) %>% 
+        mutate(name = gsub('median_NIF_pctl_authentic_', '', name)) %>%
+        unite('donor_category', donor_category:name)
+
+decoys <- css_db[variant_category == 'B' & variant_id == '17bccd9410b572586b23c922c96bc1ae', 
+       .(decoy_distance, median_NIF_pctl_decoy_ref, 
+         median_NIF_pctl_decoy_alt, donor_category)] %>%
+  mutate(median_NIF_pctl_decoy_alt = ifelse(median_NIF_pctl_decoy_alt==median_NIF_pctl_decoy_ref, NA, median_NIF_pctl_decoy_alt)) %>%
+  pivot_longer(contains('median')) %>% filter(!is.na(value)) %>% dplyr::select(-name)
+
+cm_egplot_data <-rbind(authentic, decoys) %>% setDT()
+
+cm_egplot_data[value > cm_egplot_data[donor_category == 'authentic_alt',value], color := 'DF > Authentic VAR']
+cm_egplot_data[value <= cm_egplot_data[donor_category == 'authentic_alt',value], color := 'DF <= authentic VAR']
+cm_egplot_data[value == 0.000001000, color := 'DF = 0']
+cm_egplot_data[, shape := ifelse(donor_category == 'cryptic',1,0)]
+
+CM_egplot <- ggplot(cm_egplot_data,aes(x = decoy_distance,y = value, color = color))+
+  geom_vline(xintercept = 0, linetype = 'dashed')  +
+  geom_vline(xintercept = -62, linetype = 'dashed', color = 'grey') + 
+  geom_point(size = 1.5) +
+  scale_color_manual(values = c('#0E76A1','grey','#EB9E00')) +
+  labs(y = 'DF', x = "Distance from Authentic donor", color = '') +
+  scale_x_continuous(breaks = seq(-300, 300,50), 
+                     labels = function(x) ifelse(x>0, paste0('+', x), x)) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = 'bottom') 
+```
+
+# Figure 3Biii
+
+```{r}
+# CM cryptic authentic
+data <- css_db[variant_category == 'B' & donor_category == 'cryptic'] %>% 
+  dplyr::select(variant_id,decoy_genomic_location,  contains('decoy_authentic_cat')) %>% distinct() %>%
+  pivot_longer(cols = contains('decoy_authentic_cat')) %>%
+  mutate(name = gsub('_decoy_authentic_cat','', name)) %>%
+  mutate(name = gsub('mes', 'MES', name),
+         name = gsub('nnsplice', 'NNS', name),
+         name = gsub('spliceai', 'SAI', name),
+         name = gsub('median_NIF_pctl', 'DF', name)) %>% 
+  mutate(name = factor(name, levels = c('NNS', 'MES','SAI', 'DF'))) %>% 
+  mutate(value = factor(value, levels = c('cryptic VAR not recognised', "weaker by >50%", 
+                                          "weaker by 10-50%", "similar (+/- 10%)" ,
+                                          "stronger by >10%", "authentic ALT zero")))
+
+percentData <- data  %>%
+  mutate(value = gsub(' by >50%| by 10-50%| by >10%', '', value))  %>% group_by(name, value) %>% tally() %>%
+  mutate(ratio=n/sum(n))  %>%
+  filter(value %in% c('cryptic VAR not recognised', "weaker", "stronger")) %>% setDT()
+
+CM_stronger <- ggplot(percentData[value == 'stronger'], aes(x = name, y = ratio)) + 
+  geom_bar(stat = 'identity', width = 0.6, fill = '#EB9E00')  +
+  geom_text(aes(y=ratio,label=scales::percent(ratio, accuracy = 1)), color = 'black', vjust = -1, size = 3)+
+  scale_y_continuous(expand = expansion(mult = c(0, .2)), labels = scales::percent) + 
+  ylab("CM cryptics VAR\nthat are stronger\nthan authentic (%)") + xlab('')+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+percentDataCM <- percentData
+```
+
+
+# AM/CM : delta authentic, delta cryptic, cryptic vs authentic
+
+--- AM/CM ---
+
+# Figure 3Ci 
+
+```{r}
+# AM/CM- what to do with the other cryptics used (but not modified)
+# excluce cat A cryps from cat C variants
+AMCM_cryptics <- distinct(css_db[variant_category == 'C' & donor_category == 'cryptic', .(variant_id, cryptic_donor_pos,cryptic_category )]) %>%
+  mutate(cryptic_donor_pos = strsplit(cryptic_donor_pos, ';'),
+         cryptic_category = strsplit(cryptic_category, ';'))%>%
+  unnest() %>%
+  filter(cryptic_category == 'C') %>%
+  mutate(id = paste(variant_id, cryptic_donor_pos, sep= ':')) %>%
+  pull(id)
+```
+
+```{r}
+# AMCM delta authentic
+# Get labels
+data <- css_db[variant_category == 'C'] %>%
+  dplyr::select(variant_id, contains('delta_authentic_cat')) %>% distinct() %>%
+  pivot_longer(cols = contains('delta_authentic_cat')) %>%
+  mutate(name = gsub('_delta_authentic_cat','', name)) %>%
+  mutate(name = gsub('mes', 'MES', name),
+         name = gsub('nnsplice', 'NNS', name),
+         name = gsub('spliceai', 'SAI', name),
+         name = gsub('median_NIF_pctl', 'DF', name)) %>% 
+  mutate(name = factor(name, levels = c('NNS', 'MES', 'SAI', 'DF')))%>% 
+  mutate(value = factor(value, levels = c("weaker by >50%", 
+                                          "weaker by 10-50%", "similar (+/- 10%)" ,
+                                          "stronger by >10%", "authentic REF not recognised")))
+
+percentData <- data  %>% group_by(name, value) %>% tally() %>%
+  mutate(ratio=scales::percent(n/sum(n), accuracy = 1)) %>%   mutate(ratio = ifelse(as.numeric(gsub('%', '', ratio)) < 5, '', ratio))
+
+AMCM_deltaAuthentic <- data%>%
+  ggplot(aes(x = name, fill = value)) + geom_bar(position = 'fill', width = 0.6) +
+  scale_fill_manual(values = c('#0E76A1', '#2DB5ED', '#F0C100', '#EB9E00', 'grey')) +
+  scale_y_continuous(expand = c(0,0))+
+  geom_text(data=percentData, aes(y=n,label=ratio), 
+            position=position_fill(vjust=0.5), color = 'black') + labs(y = '', x = '', fill = '')+
+  ggtitle(paste0('Δ Authentic (n = ', nrow(data) / 4, ')'))+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = 'bottom') 
+
+```
+
+# Figure 3Cii
+
+```{r}
+# AMCM delta cryptic
+
+data <- css_db[variant_category == 'C' & donor_category == 'cryptic'] %>% 
+  mutate(id = paste(variant_id, decoy_genomic_location, sep= ':'))%>%
+  dplyr::filter(id %in% AMCM_cryptics) %>%
+  dplyr::select(variant_id, decoy_genomic_location, contains('delta_decoy_cat')) %>% distinct() %>%
+  pivot_longer(cols = contains('delta_decoy_cat')) %>%
+  mutate(name = gsub('_delta_decoy_cat','', name)) %>%
+  mutate(name = gsub('mes', 'MES', name),
+         name = gsub('nnsplice', 'NNS', name),
+         name = gsub('spliceai', 'SAI', name),
+         name = gsub('median_NIF_pctl', 'DF', name))  %>% 
+  mutate(value = factor(value, levels = c('cryptic VAR not recognised', "weaker by >50%", 
+                                          "weaker by 10-50%", "similar (+/- 10%)" ,"stronger by >10%"))) %>%
+  mutate(name = factor(name, levels = c('NNS', 'MES', 'SAI', 'DF')))
+
+
+percentData <- data  %>% group_by(name, value) %>% tally() %>%
+  mutate(ratio=scales::percent(n/sum(n), accuracy = 1)) %>%   mutate(ratio = ifelse(as.numeric(gsub('%', '', ratio)) < 5, '', ratio))
+
+AMCM_deltaCryptic <- data%>%
+  ggplot(aes(x = name, fill = value)) + geom_bar(position = 'fill', width = 0.6) +
+  scale_fill_manual(values = c('grey', '#0E76A1', '#2DB5ED', '#F0C100', '#EB9E00')) +
+  scale_y_continuous(expand = c(0,0))+
+  geom_text(data=percentData, aes(y=n,label=ratio), 
+            position=position_fill(vjust=0.5), color = 'black') + labs(y = '', x = '', fill = '')+
+  ggtitle(paste0('Δ Cryptic (n = ', nrow(data) / 4, ')'))+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = 'bottom') 
+
+```
+
+
+# Figure 3Ciii
+
+```{r}
+# example variant
+authentic <- distinct(css_db[variant_category == 'C' & 
+                               variant_id == 'be783c94de26822af4692e560191c734', 
+                      .(decoy_distance = 0, donor_category = 'authentic',
+                        median_NIF_pctl_authentic_ref,median_NIF_pctl_authentic_alt)]) %>%
+        pivot_longer(contains('median')) %>% 
+        mutate(name = gsub('median_NIF_pctl_authentic_', '', name)) %>%
+        unite('donor_category', donor_category:name)
+
+decoys <- css_db[variant_category == 'C' & variant_id == 'be783c94de26822af4692e560191c734', 
+       .(decoy_distance, median_NIF_pctl_decoy_ref, 
+         median_NIF_pctl_decoy_alt, donor_category)] %>%
+  mutate(median_NIF_pctl_decoy_alt = ifelse(median_NIF_pctl_decoy_alt==median_NIF_pctl_decoy_ref, NA, median_NIF_pctl_decoy_alt)) %>%
+  pivot_longer(contains('median')) %>% filter(!is.na(value)) %>% dplyr::select(-name)
+
+amcm_egplot_data <-rbind(authentic, decoys) %>% setDT()
+
+amcm_egplot_data[value > amcm_egplot_data[donor_category == 'authentic_alt',value], color := 'DF > Authentic VAR']
+amcm_egplot_data[value <= amcm_egplot_data[donor_category == 'authentic_alt',value], color := 'DF <= authentic VAR']
+amcm_egplot_data[value == 0.000001000, color := 'DF = 0']
+amcm_egplot_data[, shape := ifelse(donor_category == 'cryptic',1,0)]
+
+AMCM_egplot <- ggplot(amcm_egplot_data,aes(x = decoy_distance,y = value, color = color)) +
+  geom_vline(xintercept = 0, linetype = 'dashed')  +
+  geom_vline(xintercept = -5, linetype = 'dashed', color = 'grey') + 
+  geom_point(size = 1.5) +
+  scale_color_manual(values = c('#0E76A1','grey','#EB9E00')) +
+  labs(y = 'DF', x = "Distance from Authentic donor", color = '') +
+  scale_x_continuous(breaks = seq(-300, 300,50), 
+                     labels = function(x) ifelse(x>0, paste0('+', x), x)) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = 'bottom') 
+```
+
+
+# Figure 3Civ
+
+```{r}
+# AMCM cryptic authentic
+data <- css_db[variant_category == 'C' & donor_category == 'cryptic'] %>% 
+  mutate(id = paste(variant_id, decoy_genomic_location, sep= ':'))%>%
+  dplyr::filter(id %in% AMCM_cryptics)  %>% 
+  dplyr::select(variant_id,decoy_genomic_location,  contains('decoy_authentic_cat')) %>% distinct() %>%
+  pivot_longer(cols = contains('decoy_authentic_cat')) %>%
+  mutate(name = gsub('_decoy_authentic_cat','', name)) %>%
+  mutate(name = gsub('mes', 'MES', name),
+         name = gsub('nnsplice', 'NNS', name),
+         name = gsub('spliceai', 'SAI', name),
+         name = gsub('median_NIF_pctl', 'DF', name)) %>% 
+  mutate(name = factor(name, levels = c('NNS', 'MES','SAI', 'DF'))) %>% 
+  mutate(value = factor(value, levels = c('cryptic VAR not recognised', "weaker by >50%", 
+                                          "weaker by 10-50%", "similar (+/- 10%)" ,
+                                          "stronger by >10%", "authentic ALT zero")))
+
+percentData <- data  %>%
+  mutate(value = gsub(' by >50%| by 10-50%| by >10%', '', value))  %>% group_by(name, value) %>% tally() %>%
+  mutate(ratio=n/sum(n))  %>%
+  filter(value %in% c('cryptic VAR not recognised', "weaker", "stronger")) %>% setDT()
+
+
+AMCM_stronger <- ggplot(percentData[value == 'stronger'], aes(x = name, y = ratio)) + 
+  geom_bar(stat = 'identity', width = 0.6, fill = '#EB9E00')  +
+  geom_text(aes(y=ratio,label=scales::percent(ratio, accuracy = 1)), color = 'black', vjust = -1, size = 3)+
+  scale_y_continuous(expand = expansion(mult = c(0, .2)), labels = scales::percent) + 
+  ylab("AM/CM cryptics\nthat are stronger\nthan authentic VAR (%)") + xlab('')+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+percentDataAMCM <- percentData
+```
+
+
+
+# Figure 3D
+
+```{r}
+library(ggcorrplot)
+
+# Authentic delta- AM & AM/CM
+a <- ggcorrplot(
+  cor(na.omit(distinct(css_db[variant_category %in% c('A', 'C'), .(variant_id, authentic_donor_pos, 
+                          DF = median_NIF_pctl_delta_authentic ,
+                          MES = mes_delta_authentic,
+                          NNS = nnsplice_delta_authentic, 
+                          SAI =  spliceai_delta_authentic)]))[is.finite(NNS),-c(1,2)],
+      method = 'pearson')
+  , lab = T, type = 'upper', title = "Authentic Δ - AM & AM/CM", show.legend = F, 
+  ggtheme = ggplot2::theme_void, colors = c("white", "white", "#0E76A1"))
+
+
+ 
+# Cryptic delta – CM & AM/CM
+b <- ggcorrplot(
+  cor(distinct(css_db[variant_category %in% c('B', 'C') & donor_category == 'cryptic', .(variant_id, decoy_genomic_location, 
+                          DF = median_NIF_pctl_decoy_alt - median_NIF_pctl_decoy_ref,
+                          MES = mes_decoy_alt - mes_decoy_ref, 
+                          NNS = nnsplice_decoy_alt - nnsplice_decoy_ref, 
+                          SAI = spliceai_decoy_alt - spliceai_decoy_ref)])[,-c(1,2)],
+      method = 'pearson')
+  , lab = T, type = 'upper', title = "Cryptic difference - CM & AM/CM", show.legend = F, 
+  ggtheme = ggplot2::theme_void, colors = c("white", "white", "#0E76A1"))
+
+
+corr <- ggarrange(a,b, nrow = 1)+
+  theme(plot.margin = margin(1,1,1,1, "cm")) 
+```
+
+
+
+```{r}
+right <- ggarrange(nrec, stronger, not_strongest, nrow = 1)+
+  theme(plot.margin = margin(1,0,1,0, "cm")) 
+AM <- ggarrange(AM_deltaAuthentic,AM_egplot,right, nrow = 1, widths = c(1,1,1.5))
+
+annotate_figure(AM,top = text_grob("Authentic-Modified (AM)"))
+
+# CM
+right <- ggarrange(CM_stronger, plot_spacer(), plot_spacer(), nrow = 1)+
+  theme(plot.margin = margin(1,0,1,0, "cm")) 
+CM <- ggarrange(CM_deltaCryptic,CM_egplot,right, nrow = 1, widths = c(1,1,1.5))
+
+annotate_figure(CM,top = text_grob("Cryptic-Modified (CM)"))
+
+
+right <- ggarrange(AMCM_stronger, plot_spacer(),plot_spacer(), nrow = 1)+
+  theme(plot.margin = margin(1,0,1,0, "cm")) 
+AMCM_1 <- ggarrange(AMCM_deltaAuthentic,AMCM_egplot,right, nrow = 1, widths = c(1,1,1.5))
+
+AMCM_2 <- ggarrange(AMCM_deltaCryptic, corr, nrow = 1, widths = c(1, 2.5))
+
+AMCM <- ggarrange(AMCM_1, AMCM_2, nrow = 2)
+annotate_figure(AMCM,top = text_grob("Authentic-Modified/Cryptic-Modified (AM/CM)"))
+
+
+```
+
+```{r}
+ggarrange(AM, CM, AMCM, ncol = 1, heights = c(1,1,2))
+ggsave('../figures/figure_3.pdf', height = 12, width = 12)
+```
+
+
+
+
+
+

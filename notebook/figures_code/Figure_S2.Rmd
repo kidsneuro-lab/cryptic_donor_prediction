@@ -1,0 +1,379 @@
+---
+title: "R Notebook"
+output: 
+---
+
+```{r echo = F, setup = T}
+library(tidyverse)
+library(data.table)
+library(BSgenome.Hsapiens.1000genomes.hs37d5)
+library(stringi)
+theme_set(theme_classic())
+library(ggplot2)
+library(ggpubr)
+library(patchwork)
+library(expss)
+library(Rfast)
+library(ggseqlogo)
+source('../../utils.R')
+```
+
+```{r}
+css_db <- fread('../../data/processed/css_database_predictions.tsv.gz')
+```
+
+```{r}
+# cryptics & authentics
+nns <-  css_db[donor_category == 'cryptic'] %>% 
+  dplyr::select(variant_id, decoy_genomic_location ,variant_category,
+                delta_authentic_cat = nnsplice_delta_authentic_cat, 
+                delta_authentic = nnsplice_delta_authentic,
+                delta_cryptic_cat = nnsplice_delta_decoy_cat,
+                delta_cryptic = nnsplice_delta_decoy,
+                decoy_authentic_cat = nnsplice_decoy_authentic_cat,
+                decoy_authentic = nnsplice_decoy_authentic) %>% 
+  mutate(alg = 'NNS') %>% distinct() 
+
+mes <-  css_db[donor_category == 'cryptic'] %>% 
+  dplyr::select(variant_id, decoy_genomic_location ,variant_category,
+                delta_authentic_cat = mes_delta_authentic_cat, 
+                delta_authentic = mes_delta_authentic,
+                delta_cryptic_cat = mes_delta_decoy_cat,
+                delta_cryptic = mes_delta_decoy,
+                decoy_authentic_cat = mes_decoy_authentic_cat,
+                decoy_authentic = mes_decoy_authentic) %>% 
+  mutate(alg = 'MES') %>% distinct() 
+
+sai <-  css_db[donor_category == 'cryptic'] %>% 
+  dplyr::select(variant_id, decoy_genomic_location ,variant_category,
+                delta_authentic_cat = spliceai_delta_authentic_cat, 
+                delta_authentic = spliceai_delta_authentic,
+                delta_cryptic_cat = spliceai_delta_decoy_cat,
+                delta_cryptic = spliceai_delta_decoy,
+                decoy_authentic_cat = spliceai_decoy_authentic_cat,
+                decoy_authentic = spliceai_decoy_authentic) %>% 
+  mutate(alg = 'SAI') %>% distinct() 
+
+df <-  css_db[donor_category == 'cryptic'] %>% 
+  dplyr::select(variant_id, decoy_genomic_location ,variant_category,
+                delta_authentic_cat = median_NIF_pctl_delta_authentic_cat, 
+                delta_authentic = median_NIF_pctl_delta_authentic,
+                delta_cryptic_cat = median_NIF_pctl_delta_decoy_cat,
+                delta_cryptic = median_NIF_pctl_delta_decoy,
+                decoy_authentic_cat = median_NIF_pctl_decoy_authentic_cat,
+                decoy_authentic = median_NIF_pctl_decoy_authentic) %>% 
+  mutate(alg = 'DF') %>% distinct()
+
+data <- bind_rows(nns, mes, sai, df)
+
+
+```
+
+
+```{r}
+# decoys
+nns <-  css_db[variant_category == 'A' & donor_category != 'cryptic'] %>% 
+  dplyr::select(variant_id, decoy_genomic_location ,
+                delta_authentic_cat = nnsplice_delta_authentic_cat, 
+                delta_authentic = nnsplice_delta_authentic,
+                delta_cryptic_cat = nnsplice_delta_decoy_cat,
+                delta_cryptic = nnsplice_delta_decoy,
+                decoy_authentic_cat = nnsplice_decoy_authentic_cat,
+                decoy_authentic = nnsplice_decoy_authentic) %>% 
+  mutate(alg = 'NNS') %>% distinct() 
+
+mes <-  css_db[variant_category == 'A' & donor_category != 'cryptic'] %>% 
+  dplyr::select(variant_id, decoy_genomic_location ,
+                delta_authentic_cat = mes_delta_authentic_cat, 
+                delta_authentic = mes_delta_authentic,
+                delta_cryptic_cat = mes_delta_decoy_cat,
+                delta_cryptic = mes_delta_decoy,
+                decoy_authentic_cat = mes_decoy_authentic_cat,
+                decoy_authentic = mes_decoy_authentic) %>% 
+  mutate(alg = 'MES') %>% distinct() 
+
+sai <-  css_db[variant_category == 'A' & donor_category != 'cryptic'] %>% 
+  dplyr::select(variant_id, decoy_genomic_location ,
+                delta_authentic_cat = spliceai_delta_authentic_cat, 
+                delta_authentic = spliceai_delta_authentic,
+                delta_cryptic_cat = spliceai_delta_decoy_cat,
+                delta_cryptic = spliceai_delta_decoy,
+                decoy_authentic_cat = spliceai_decoy_authentic_cat,
+                decoy_authentic = spliceai_decoy_authentic) %>% 
+  mutate(alg = 'SAI') %>% distinct() 
+
+df <-  css_db[variant_category == 'A' & donor_category != 'cryptic'] %>% 
+  dplyr::select(variant_id, decoy_genomic_location ,
+                delta_authentic_cat = median_NIF_pctl_delta_authentic_cat, 
+                delta_authentic = median_NIF_pctl_delta_authentic,
+                delta_cryptic_cat = median_NIF_pctl_delta_decoy_cat,
+                delta_cryptic = median_NIF_pctl_delta_decoy,
+                decoy_authentic_cat = median_NIF_pctl_decoy_authentic_cat,
+                decoy_authentic = median_NIF_pctl_decoy_authentic) %>% 
+  mutate(alg = 'DF') %>% distinct()
+
+AM_decoys <- bind_rows(nns, mes, sai, df)
+
+```
+ 
+# Figure s2A
+
+```{r}
+AM_delta_authentic <- data  %>%
+  filter(variant_category == 'A') %>%
+  select(variant_id, alg, contains('delta_authentic')) %>% distinct() %>%
+  filter(!delta_authentic_cat %in% c('authentic REF not recognised')) %>%
+  mutate(delta_authentic_cat = factor(delta_authentic_cat, 
+                                      levels = c('weaker by >50%', 'weaker by 10-50%',
+                                                 'similar (+/- 10%)', 'stronger by >10%'))) %>%
+  mutate(delta_authentic = ifelse(delta_authentic > 2, 2, delta_authentic)) %>%
+  ggplot(aes(y = delta_authentic, x = alg, color = delta_authentic_cat)) + 
+  geom_jitter(stroke= 0, alpha = 0.6)  +
+  scale_color_manual(values = c('#0E76A1', '#2DB5ED', '#F0C100', '#EB9E00', 'grey')) +
+  geom_hline( yintercept = 1, linetype = 'dashed') +
+  labs(y = 'Authentic VAR / Authentic REF \n (Delta Authentic)', x = '') +
+  theme(legend.position = 'none') +
+  scale_y_continuous(labels = function(y) ifelse(y>=2, paste0('>=', y), y)) +
+  ggtitle('AM-variants\ndelta-Authentic')
+```
+
+```{r}
+AM_delta_cryptic <- data  %>%
+  filter(variant_category == 'A')%>%
+  select(variant_id, decoy_genomic_location, alg, contains('delta_cryptic')) %>% distinct()  %>%
+  mutate(delta_cryptic = ifelse(delta_cryptic > 2, 2, delta_cryptic),
+         delta_cryptic = ifelse(delta_cryptic_cat == 'cryptic VAR not recognised', 0, delta_cryptic)) %>%
+  mutate(delta_cryptic_cat = factor(delta_cryptic_cat, 
+                                      levels = c('weaker by >50%', 'weaker by 10-50%',
+                                                 'similar (+/- 10%)', 'stronger by >10%',
+                                                 'cryptic VAR not recognised')))  %>%
+  ggplot(aes(y = delta_cryptic, x = alg, color = delta_cryptic_cat)) + 
+  geom_jitter(stroke = 0, size = 0.9, alpha = 0.1)  +
+  scale_color_manual(values = c('#0E76A1', '#2DB5ED', '#F0C100', '#EB9E00', 'grey')) +
+  geom_hline( yintercept = 1, linetype = 'dashed') +
+  labs(y = 'Cryptic VAR / Cryptic REF \n (Delta Cryptic)', x = '') +
+  theme(legend.position = 'none') +
+  scale_y_continuous(labels = function(y) ifelse(y>=2, paste0('>=', y), y)) +
+  ggtitle('AM-variants\ndelta-Cryptic')
+```
+
+```{r}
+AM_cryptic_authentic <- data  %>%
+  filter(variant_category == 'A')%>%
+  select(variant_id, decoy_genomic_location, alg, contains('decoy_authentic')) %>% distinct()  %>%
+  mutate(decoy_authentic = ifelse(decoy_authentic > 2, 2, decoy_authentic),
+         decoy_authentic = ifelse(decoy_authentic_cat == 'cryptic VAR not recognised', 
+                                  0, decoy_authentic)) %>%
+  mutate(decoy_authentic_cat = factor(decoy_authentic_cat, 
+                                      levels = c('weaker by >50%', 'weaker by 10-50%',
+                                                 'similar (+/- 10%)', 'stronger by >10%',
+                                                 'cryptic VAR not recognised'))) %>%
+  ggplot(aes(y = decoy_authentic, x = alg, color = decoy_authentic_cat)) + 
+  geom_jitter(stroke = 0, size = 0.9, alpha = 0.1)  +
+  scale_color_manual(values = c('#0E76A1', '#2DB5ED', '#F0C100', '#EB9E00', 'grey')) +
+  geom_hline( yintercept = 1, linetype = 'dashed') +
+  labs(y = 'Cryptic VAR / Authentic VAR', x = '') +
+  theme(legend.position = 'none') +
+  scale_y_continuous(labels = function(y) ifelse(y>=2, paste0('>=', y), y)) +
+  ggtitle('AM-variants\nCryptic VAR / Authentic VAR')
+```
+
+```{r}
+AM_decoy_authentic <- AM_decoys   %>%
+  select(variant_id, decoy_genomic_location, alg, contains('decoy_authentic')) %>% distinct()  %>%
+  mutate(decoy_authentic = ifelse(decoy_authentic > 2, 2, decoy_authentic),
+         decoy_authentic = ifelse(decoy_authentic_cat == 'cryptic VAR not recognised', 0, decoy_authentic))%>%
+  mutate(decoy_authentic_cat = factor(decoy_authentic_cat, 
+                                      levels = c('weaker by >50%', 'weaker by 10-50%',
+                                                 'similar (+/- 10%)', 'stronger by >10%',
+                                                 'cryptic VAR not recognised'))) %>%
+  ggplot(aes(y = decoy_authentic, x = alg, color = decoy_authentic_cat)) + 
+  ggrastr::rasterise(geom_jitter(stroke = 0, size = 0.9, alpha = 0.1), dpi = 300)+
+  scale_color_manual(values = c('#0E76A1', '#2DB5ED', '#F0C100', '#EB9E00', 'grey')) +
+  geom_hline( yintercept = 1, linetype = 'dashed') +
+  labs(y = 'Cryptic VAR / Authentic VAR', x = '') +
+  theme(legend.position = 'none') +
+  scale_y_continuous(labels = function(y) ifelse(y>=2, paste0('>=', y), y))+
+  ggtitle('AM-variants\nDecoy VAR / Authentic VAR')
+```
+
+# Figure s2b
+
+```{r}
+CM_delta_authentic <-  data  %>%
+  filter(variant_category == 'B') %>% 
+  select(variant_id, decoy_genomic_location, alg, contains('delta_authentic')) %>% distinct() %>%
+  filter(!delta_authentic_cat %in% c('authentic REF not recognised')) %>%
+  mutate(delta_authentic = ifelse(delta_authentic > 2, 2, delta_authentic)) %>%
+  mutate(delta_authentic_cat = factor(delta_authentic_cat, 
+                                      levels = c('weaker by >50%', 'weaker by 10-50%',
+                                                 'similar (+/- 10%)', 'stronger by >10%',
+                                                 'authentic REF not recognised')))%>%
+  ggplot(aes(y = delta_authentic, x = alg, color = delta_authentic_cat)) + 
+  geom_jitter(stroke = 0, size = 0.9, alpha = 0.1)  +
+  scale_color_manual(values = c('#0E76A1', '#2DB5ED', '#F0C100', '#EB9E00', 'grey')) +
+  geom_hline( yintercept = 1, linetype = 'dashed') +
+  labs(y = 'Authentic VAR / Authentic REF \n (Delta Authentic)', x = '') +
+  theme(legend.position = 'none') +
+  scale_y_continuous(labels = function(y) ifelse(y>=2, paste0('>=', y), y))+
+  ggtitle('CM-variants\ndelta-Authentic')
+```
+
+```{r}
+
+CM_delta_cryptic <-data  %>%
+  filter(variant_category == 'B') %>% 
+  select(variant_id, decoy_genomic_location, alg, contains('delta_cryptic')) %>% distinct()   %>%
+  mutate(delta_cryptic = ifelse(delta_cryptic > 2, 2, delta_cryptic),
+         delta_cryptic = ifelse(delta_cryptic_cat == 'cryptic VAR not recognised', 0, delta_cryptic)) %>%
+  mutate(delta_cryptic_cat = factor(delta_cryptic_cat, 
+                                      levels = c('weaker by >50%', 'weaker by 10-50%',
+                                                 'similar (+/- 10%)', 'stronger by >10%',
+                                                 'cryptic VAR not recognised'))) %>%
+  ggplot(aes(y = delta_cryptic, x = alg, color = delta_cryptic_cat)) + 
+  geom_jitter(stroke = 0, size = 0.9, alpha = 0.1)  +
+  scale_color_manual(values = c('#0E76A1', '#2DB5ED', '#F0C100', '#EB9E00', 'grey')) +
+  geom_hline( yintercept = 1, linetype = 'dashed') +
+  labs(y = 'Cryptic VAR / Cryptic REF \n (Delta Cryptic)', x = '') +
+  theme(legend.position = 'none') +
+  scale_y_continuous(labels = function(y) ifelse(y>=2, paste0('>=', y), y))+
+  ggtitle('CM-variants\ndelta-Cryptic')
+```
+
+
+```{r}
+CM_cryptic_authentic <- data  %>%
+  filter(variant_category == 'B') %>% 
+  select(variant_id, decoy_genomic_location, alg, contains('decoy_authentic')) %>% distinct()   %>%
+  mutate(decoy_authentic = ifelse(decoy_authentic > 2, 2, decoy_authentic),
+         decoy_authentic = ifelse(decoy_authentic_cat == 'cryptic VAR not recognised', 0, decoy_authentic)) %>%
+  mutate(decoy_authentic_cat = factor(decoy_authentic_cat, 
+                                      levels = c('weaker by >50%', 'weaker by 10-50%',
+                                                 'similar (+/- 10%)', 'stronger by >10%',
+                                                 'cryptic VAR not recognised')))%>%
+  ggplot(aes(y = decoy_authentic, x = alg, color = decoy_authentic_cat)) + 
+  geom_jitter(stroke = 0, size = 0.9, alpha = 0.1)  +
+  scale_color_manual(values = c('#0E76A1', '#2DB5ED', '#F0C100', '#EB9E00', 'grey')) +
+  geom_hline( yintercept = 1, linetype = 'dashed') +
+  labs(y = 'Cryptic VAR / Authentic VAR', x = '') +
+  theme(legend.position = 'none') +
+  scale_y_continuous(labels = function(y) ifelse(y>=2, paste0('>=', y), y))+
+  ggtitle('CM-variants\nCryptic VAR / Authentic VAR')
+
+```
+
+# Figure S2C
+
+```{r}
+AMCM_cryptics <- distinct(css_db[variant_category == 'C' & donor_category == 'cryptic', .(variant_id, cryptic_donor_pos,cryptic_category )]) %>%
+  mutate(cryptic_donor_pos = strsplit(cryptic_donor_pos, ';'),
+         cryptic_category = strsplit(cryptic_category, ';'))%>%
+  unnest() %>%
+  filter(cryptic_category == 'C') %>%
+  mutate(id = paste(variant_id, cryptic_donor_pos, sep= ':')) %>%
+  pull(id)
+```
+
+
+
+```{r}
+
+AMCM_delta_authentic <- data[variant_category == 'C']%>% 
+  mutate(id = paste(variant_id, decoy_genomic_location, sep= ':')) %>%
+  dplyr::filter(id %in% AMCM_cryptics) %>% 
+  select(variant_id, decoy_genomic_location, alg, contains('delta_authentic')) %>% distinct() %>%
+  filter(!delta_authentic_cat %in% c('authentic REF not recognised')) %>%
+  mutate(delta_authentic = ifelse(delta_authentic > 2, 2, delta_authentic)) %>%
+  mutate(delta_authentic_cat = factor(delta_authentic_cat, 
+                                      levels = c('weaker by >50%', 'weaker by 10-50%',
+                                                 'similar (+/- 10%)', 'stronger by >10%',
+                                                 'authentic REF not recognised')))%>%
+  ggplot(aes(y = delta_authentic, x = alg, color = delta_authentic_cat)) + 
+  geom_jitter(stroke = 0, size = 0.9, alpha = 0.1)  +
+  scale_color_manual(values = c('#0E76A1', '#2DB5ED', '#F0C100', '#EB9E00', 'grey')) +
+  geom_hline( yintercept = 1, linetype = 'dashed') +
+  labs(y = 'Authentic VAR / Authentic REF \n (Delta Authentic)', x = '') +
+  theme(legend.position = 'none') +
+  scale_y_continuous(labels = function(y) ifelse(y>=2, paste0('>=', y), y))+
+  ggtitle('AM/CM-variants\ndelta-Authentic')
+
+```
+
+```{r}
+AMCM_delta_cryptic <-data[variant_category == 'C']%>% 
+  mutate(id = paste(variant_id, decoy_genomic_location, sep= ':')) %>%
+  dplyr::filter(id %in% AMCM_cryptics) %>% 
+  select(variant_id, decoy_genomic_location, alg, contains('delta_cryptic')) %>% distinct()  %>%
+  mutate(delta_cryptic = ifelse(delta_cryptic > 2, 2, delta_cryptic),
+         delta_cryptic = ifelse(delta_cryptic_cat == 'cryptic VAR not recognised', 0, delta_cryptic)) %>%
+  mutate(delta_cryptic_cat = factor(delta_cryptic_cat, 
+                                      levels = c('weaker by >50%', 'weaker by 10-50%',
+                                                 'similar (+/- 10%)', 'stronger by >10%',
+                                                 'cryptic VAR not recognised'))) %>%
+  ggplot(aes(y = delta_cryptic, x = alg, color = delta_cryptic_cat)) + 
+  geom_jitter(stroke = 0, size = 0.9, alpha = 0.1)  +
+  scale_color_manual(values = c('#0E76A1', '#2DB5ED', '#F0C100', '#EB9E00', 'grey')) +
+  geom_hline( yintercept = 1, linetype = 'dashed') +
+  labs(y = 'Cryptic VAR / Cryptic REF \n (Delta Cryptic)', x = '') +
+  theme(legend.position = 'none') +
+  scale_y_continuous(labels = function(y) ifelse(y>=2, paste0('>=', y), y))+
+  ggtitle('AM/CM-variants\ndelta-Cryptic')
+```
+
+```{r}
+
+AMCM_cryptic_authentic <- data[variant_category == 'C']%>% 
+  mutate(id = paste(variant_id, decoy_genomic_location, sep= ':')) %>%
+  dplyr::filter(id %in% AMCM_cryptics) %>% 
+  select(variant_id, decoy_genomic_location, alg, contains('decoy_authentic')) %>% distinct()  %>%
+  mutate(decoy_authentic = ifelse(decoy_authentic > 2, 2, decoy_authentic),
+         decoy_authentic = ifelse(decoy_authentic_cat == 'cryptic VAR not recognised', 0, decoy_authentic)) %>%
+  mutate(decoy_authentic_cat = factor(decoy_authentic_cat, 
+                                      levels = c('weaker by >50%', 'weaker by 10-50%',
+                                                 'similar (+/- 10%)', 'stronger by >10%',
+                                                 'cryptic VAR not recognised')))%>%
+  ggplot(aes(y = decoy_authentic, x = alg, color = decoy_authentic_cat)) + 
+  geom_jitter(stroke = 0, size = 0.9, alpha = 0.1)  +
+  scale_color_manual(values = c('#0E76A1', '#2DB5ED', '#F0C100', '#EB9E00', 'grey')) +
+  geom_hline( yintercept = 1, linetype = 'dashed') +
+  labs(y = 'Cryptic VAR / Authentic VAR', x = '') +
+  theme(legend.position = 'none') +
+  scale_y_continuous(labels = function(y) ifelse(y>=2, paste0('>=', y), y))+
+  ggtitle('AM/CM-variants\nCryptic VAR / Authentic VAR')
+```
+
+
+# Figure S2D
+
+```{r}
+sai <- css_db[donor_category == 'cryptic'] %>% ggplot(aes(x = median_NIF_pctl_decoy_alt, y = spliceai_decoy_alt))  + 
+  geom_point(size = 0.3, color= 'grey') + labs(x = 'DF', y = 'SAI')
+mes <- css_db[donor_category == 'cryptic'] %>% ggplot(aes(x = median_NIF_pctl_decoy_alt, y = mes_decoy_alt)) + 
+  geom_point(size = 0.3, color= 'grey')+ labs(x = 'DF', y = 'MES')
+nns <- css_db[donor_category == 'cryptic'] %>% ggplot(aes(x = median_NIF_pctl_decoy_alt, y = nnsplice_decoy_alt)) + 
+  geom_point(size = 0.3, color= 'grey')+ labs(x = 'DF', y = 'NNS')
+
+```
+
+
+
+
+```{r}
+AM <- ggarrange(AM_delta_authentic,AM_delta_cryptic,AM_cryptic_authentic,AM_decoy_authentic, nrow = 1)
+
+CM <- ggarrange(CM_delta_authentic,CM_delta_cryptic,CM_cryptic_authentic,plot_spacer(), nrow = 1)
+
+AMCM <- ggarrange(AMCM_delta_authentic,AMCM_delta_cryptic,AMCM_cryptic_authentic,plot_spacer(), nrow = 1)
+
+bottom <- ggarrange(nns, mes, sai, nrow = 1)
+ggarrange(AM, CM ,AMCM,bottom, ncol = 1)
+ggsave('../figures/figure_s2.pdf', width = 9, height = 11)
+
+```
+
+
+
+
+
+
+

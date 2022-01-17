@@ -1,0 +1,64 @@
+---
+title: "R Notebook"
+output: 
+---
+```{r}
+library(data.table)
+library(tidyverse)
+```
+
+```{r}
+css_db <- fread('../../data/processed/css_database.tsv.gz')
+css_db <- css_db[!source %in% c('spliceAI GTEx')]
+msd <- fread('../../data/ref/splice_competent_events.tsv.gz')
+```
+
+
+```{r}
+normal_splicing <- msd[tx_id %in% unique(css_db$tx_id) & 
+                         splice_site_pos %in% unique(css_db$authentic_donor_pos) &
+                         splicing_event_class == 'normal splicing']
+normal_splicing <- normal_splicing[-which(duplicated(normal_splicing[, 1:4]))]
+
+msd <- msd[tx_id %in% unique(css_db$tx_id) & 
+             splice_site_pos %in% unique(css_db$authentic_donor_pos) &
+             splicing_event_class =="cryptic 5'SS"]
+
+# add normal splicing columns to cryptyc info
+msd <- msd[normal_splicing[, .(splice_site_pos, tx_id, strand, chr,
+                        ns_sample_count = sample_count,
+                        ns_gtex_max_uniq_map_reads = gtex_max_uniq_map_reads,
+                        ns_intropolis_max_reads = intropolis_max_reads)], 
+    on = .(splice_site_pos, tx_id, strand, chr)]
+
+
+setDT(msd)[, css_event_rank := rowid(splice_site_pos), by = list(tx_id)]  
+
+setDT(msd)[abs(cryptic_distance ) <= 250 , css_event_rank_250 := rowid(splice_site_pos), by = list(tx_id)]   
+```
+
+```{r}
+
+css_db_msd <- msd[, .(tx_id, chrom = chr, authentic_donor_pos = splice_site_pos, decoy_genomic_location = donor_pos, 
+                      sample_count, gtex_max_uniq_map_reads, intropolis_max_reads, css_event_rank,
+                      css_event_rank_250)][css_db, 
+                                           on = .(tx_id, chrom, 
+                                                  authentic_donor_pos,
+                                                  decoy_genomic_location)]
+
+css_db_msd <- distinct(msd[, .(tx_id, chrom = chr, authentic_donor_pos = splice_site_pos, ns_sample_count, 
+                               ns_gtex_max_uniq_map_reads, ns_intropolis_max_reads)])[css_db_msd, 
+                                                                                      on = .(tx_id, chrom, 
+                                                                                             authentic_donor_pos)]
+
+
+css_db_msd <- css_db_msd[-which(duplicated(css_db_msd[, .(tx_id, variant_id, 
+                                                          chrom, authentic_donor_pos, 
+                                                          decoy_genomic_location)]) == T),]
+```
+
+
+```{r}
+fwrite(css_db_msd, '../../data/processed/css_database_msd.tsv.gz')
+```
+

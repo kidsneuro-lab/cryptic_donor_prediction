@@ -1,0 +1,154 @@
+---
+title: "R Notebook"
+output: 
+---
+
+```{r}
+library(tidyverse)
+library(data.table)
+```
+
+```{r}
+css_db <- fread('../../data/processed/css_database_msd.tsv.gz')
+css_db <- css_db[!source %in% c('spliceAI GTEx')]
+css_db <- css_db[(donor_category == 'cryptic' | abs(decoy_distance) <= 250) & !is.na(mes_decoy_alt)]
+# floor MES scores at zero
+css_db[mes_authentic_ref < 0 , mes_authentic_ref := 0]
+css_db[mes_authentic_alt < 0 , mes_authentic_alt := 0]
+css_db[mes_decoy_ref < 0 , mes_decoy_ref := 0]
+css_db[mes_decoy_alt < 0 , mes_decoy_alt := 0]
+# round spliceAI scores to 3 decimal points
+css_db[, spliceai_authentic_ref := round(spliceai_authentic_ref, 3)]
+css_db[, spliceai_authentic_alt := round(spliceai_authentic_alt, 3)]
+css_db[, spliceai_decoy_ref := round(spliceai_decoy_ref, 3)]
+css_db[, spliceai_decoy_alt := round(spliceai_decoy_alt, 3)]
+```
+
+```{r}
+css_db[, mes_delta_authentic := mes_authentic_alt / mes_authentic_ref]
+css_db[mes_authentic_ref > 0, mes_delta_authentic_cat := cut(mes_delta_authentic, 
+                                        breaks = c(0, 0.5, 0.9, 1.1, max(mes_delta_authentic)), 
+                                        labels = c('weaker by >50%', 'weaker by 10-50%', 
+                                                   'similar (+/- 10%)', 'stronger by >10%'), 
+                                        include.lowest = T, ordered_result = F)]
+css_db[mes_authentic_ref == 0, mes_delta_authentic_cat := 'authentic REF not recognised']
+
+
+css_db[mes_decoy_alt == 0, mes_decoy_alt := 0.000001]
+css_db[mes_decoy_ref == 0, mes_decoy_ref := 0.000001]
+css_db[, mes_delta_decoy := mes_decoy_alt / mes_decoy_ref]
+css_db[, mes_delta_decoy_cat := cut(mes_delta_decoy, 
+                                    breaks = c(0, 0.5, 0.9, 1.1, max(mes_delta_decoy)), 
+                                    labels = c('weaker by >50%', 'weaker by 10-50%', 
+                                               'similar (+/- 10%)', 'stronger by >10%'), 
+                                    include.lowest = T, ordered_result = F)]
+css_db[mes_decoy_alt == 0.000001 & donor_category == 'cryptic', mes_delta_decoy_cat := 'cryptic VAR not recognised']
+
+css_db[mes_authentic_alt == 0, mes_authentic_alt := 0.000001]
+css_db[, mes_decoy_authentic := mes_decoy_alt / mes_authentic_alt]
+css_db[, mes_decoy_authentic_cat := cut(mes_decoy_authentic, 
+                                        breaks = c(0, 0.5, 0.9, 1.1, max(mes_decoy_authentic)), 
+                                        labels = c('weaker by >50%', 'weaker by 10-50%', 
+                                                   'similar (+/- 10%)', 'stronger by >10%'), 
+                                        include.lowest = T, ordered_result = F)]
+css_db[mes_decoy_alt == 0.000001 & donor_category == 'cryptic', 
+       mes_decoy_authentic_cat := 'cryptic VAR not recognised']
+
+```
+
+```{r}
+css_db[, nnsplice_delta_authentic := nnsplice_authentic_alt / nnsplice_authentic_ref]
+css_db[nnsplice_authentic_ref > 0, nnsplice_delta_authentic_cat := cut(nnsplice_delta_authentic, 
+                                        breaks = c(0, 0.5, 0.9, 1.1, max(nnsplice_delta_authentic)), 
+                                        labels = c('weaker by >50%', 'weaker by 10-50%', 
+                                                   'similar (+/- 10%)', 'stronger by >10%'),
+                                        include.lowest = T, ordered_result = F)]
+css_db[nnsplice_authentic_ref == 0, nnsplice_delta_authentic_cat := 'authentic REF not recognised']
+
+
+css_db[nnsplice_decoy_alt == 0, nnsplice_decoy_alt := 0.000001]
+css_db[nnsplice_decoy_ref == 0, nnsplice_decoy_ref := 0.000001]
+css_db[, nnsplice_delta_decoy := nnsplice_decoy_alt / nnsplice_decoy_ref]
+css_db[, nnsplice_delta_decoy_cat := cut(nnsplice_delta_decoy, 
+                                    breaks = c(0, 0.5, 0.9, 1.1, max(nnsplice_delta_decoy)), 
+                                    labels = c('weaker by >50%', 'weaker by 10-50%', 
+                                               'similar (+/- 10%)', 'stronger by >10%'), 
+                                    include.lowest = T, ordered_result = F)]
+css_db[nnsplice_decoy_alt == 0.000001 & donor_category == 'cryptic', nnsplice_delta_decoy_cat := 'cryptic VAR not recognised']
+
+css_db[nnsplice_authentic_alt == 0, nnsplice_authentic_alt := 0.000001]
+css_db[, nnsplice_decoy_authentic := nnsplice_decoy_alt / nnsplice_authentic_alt]
+css_db[, nnsplice_decoy_authentic_cat := cut(nnsplice_decoy_authentic, 
+                                        breaks = c(0, 0.5, 0.9, 1.1, 
+                                                   max(css_db[nnsplice_authentic_alt > 0]$nnsplice_decoy_authentic)), 
+                                        labels = c('weaker by >50%', 'weaker by 10-50%', 
+                                                   'similar (+/- 10%)', 'stronger by >10%'),
+                                        include.lowest = T, ordered_result = F)]
+css_db[nnsplice_decoy_alt == 0.000001 & donor_category == 'cryptic', nnsplice_decoy_authentic_cat := 'cryptic VAR not recognised']
+
+```
+
+
+```{r}
+
+css_db[, spliceai_delta_authentic := spliceai_authentic_alt / spliceai_authentic_ref]
+css_db[spliceai_authentic_ref > 0, spliceai_delta_authentic_cat := cut(spliceai_delta_authentic, 
+                                        breaks = c(0, 0.5, 0.9, 1.1, max(spliceai_delta_authentic)), 
+                                        labels = c('weaker by >50%', 'weaker by 10-50%', 'similar (+/- 10%)', 'stronger by >10%'),
+                                        include.lowest = T, ordered_result = F)]
+css_db[spliceai_authentic_ref == 0, spliceai_delta_authentic_cat := 'authentic REF not recognised']
+
+css_db[spliceai_decoy_alt == 0, spliceai_decoy_alt := 0.000001]
+css_db[spliceai_decoy_ref == 0, spliceai_decoy_ref := 0.000001]
+css_db[, spliceai_delta_decoy := spliceai_decoy_alt / spliceai_decoy_ref]
+css_db[, spliceai_delta_decoy_cat := cut(spliceai_delta_decoy, 
+                                    breaks = c(0, 0.5, 0.9, 1.1, max(spliceai_delta_decoy)), 
+                                    labels = c('weaker by >50%', 'weaker by 10-50%', 'similar (+/- 10%)', 'stronger by >10%'), 
+                                    include.lowest = T, ordered_result = F)]
+css_db[spliceai_decoy_alt == 0.000001 & donor_category == 'cryptic', spliceai_delta_decoy_cat := 'cryptic VAR not recognised']
+
+css_db[spliceai_authentic_alt == 0, spliceai_authentic_alt := 0.000001]
+css_db[, spliceai_decoy_authentic := spliceai_decoy_alt / spliceai_authentic_alt]
+css_db[, spliceai_decoy_authentic_cat := cut(spliceai_decoy_authentic, 
+                                       breaks = c(0, 0.5, 0.9, 1.1, max(css_db[spliceai_authentic_alt > 0]$spliceai_decoy_authentic)), 
+                                        labels = c('weaker by >50%', 'weaker by 10-50%', 'similar (+/- 10%)', 'stronger by >10%'),
+                                        include.lowest = T, ordered_result = F)]
+css_db[spliceai_decoy_alt == 0.000001 & donor_category == 'cryptic', spliceai_decoy_authentic_cat := 'cryptic VAR not recognised']
+
+```
+
+```{r}
+css_db[, median_NIF_pctl_delta_authentic := median_NIF_pctl_authentic_alt / median_NIF_pctl_authentic_ref]
+css_db[median_NIF_pctl_authentic_ref > 0, median_NIF_pctl_delta_authentic_cat := cut(median_NIF_pctl_delta_authentic, 
+                                        breaks = c(0, 0.5, 0.9, 1.1, max(median_NIF_pctl_delta_authentic)), 
+                                        labels = c('weaker by >50%', 'weaker by 10-50%', 'similar (+/- 10%)', 'stronger by >10%'),
+                                        include.lowest = T, ordered_result = F)]
+css_db[median_NIF_pctl_authentic_ref == 0, median_NIF_pctl_delta_authentic_cat := 'authentic REF not recognised']
+
+css_db[donor_category == 'cryptic', median_NIF_pctl_delta_decoy_cat := 'cryptic VAR not recognised']
+css_db[median_NIF_pctl_decoy_ref == 0 & median_NIF_pctl_decoy_alt == 0, median_NIF_pctl_decoy_alt := 0.000001]
+css_db[median_NIF_pctl_decoy_ref == 0, median_NIF_pctl_decoy_ref := 0.000001]
+css_db[, median_NIF_pctl_delta_decoy := median_NIF_pctl_decoy_alt / median_NIF_pctl_decoy_ref]
+css_db[, median_NIF_pctl_delta_decoy_cat := cut(median_NIF_pctl_delta_decoy, 
+                                    breaks = c(0, 0.5, 0.9, 1.1, max(median_NIF_pctl_delta_decoy)), 
+                                    labels = c('weaker by >50%', 'weaker by 10-50%', 'similar (+/- 10%)', 'stronger by >10%'), 
+                                    include.lowest = T, ordered_result = F)]
+css_db[median_NIF_pctl_decoy_alt == 0.000001 & donor_category == 'cryptic', median_NIF_pctl_delta_decoy_cat := 'cryptic VAR not recognised']
+
+
+css_db[median_NIF_pctl_authentic_alt == 0, median_NIF_pctl_authentic_alt := 0.000001]
+css_db[, median_NIF_pctl_decoy_authentic := median_NIF_pctl_decoy_alt / median_NIF_pctl_authentic_alt]
+css_db[, median_NIF_pctl_decoy_authentic_cat := cut(median_NIF_pctl_decoy_authentic, 
+                                        breaks = c(0, 0.5, 0.9, 1.1, max(css_db[median_NIF_pctl_authentic_alt > 0]$median_NIF_pctl_decoy_authentic)), 
+                                        labels = c('weaker by >50%', 'weaker by 10-50%', 'similar (+/- 10%)', 'stronger by >10%'),
+                                        include.lowest = T, ordered_result = F)]
+css_db[median_NIF_pctl_decoy_alt == 0.000001 & donor_category == 'cryptic', median_NIF_pctl_decoy_authentic_cat := 'cryptic VAR not recognised']
+
+
+```
+
+
+```{r}
+fwrite(css_db, '../../data/processed/css_database_predictions.tsv.gz')
+```
+

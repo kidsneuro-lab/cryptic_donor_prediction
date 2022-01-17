@@ -1,0 +1,293 @@
+---
+title: "R Notebook"
+output: 
+---
+
+
+```{r}
+library(data.table)
+library(tidyverse)
+theme_set(theme_classic())
+# library(ggpmisc)
+# library(BSgenome.Hsapiens.1000genomes.hs37d5)
+# library(biomaRt)
+# library(ggsci)
+# library(RColorBrewer)
+# library(ggpubr)
+```
+
+# Supplemental
+
+```{r}
+css_db_msd <- fread('../../data/processed/css_database_msd.tsv.gz')
+css_db_msd[, in_msd := ifelse(is.na(css_event_rank), 'Not in MSD',
+                                 ifelse(css_event_rank <= 4, 'In top 4','In msd')) ]
+
+css_db_msd_A <- css_db_msd[variant_category == 'A' & 
+                             (abs(decoy_distance) <= 250) & !is.na(mes_decoy_alt)]
+css_db_msd_A <- css_db_msd_A %>%
+  mutate(SAI_cutoff := ifelse(spliceai_decoy_alt - spliceai_decoy_ref >=0.1, 'cryptic', 'decoy'),
+         SCE_cutoff := ifelse((css_event_rank_250 > 4 | 
+                                 is.na(css_event_rank_250)),'decoy', 'cryptic'))
+
+css_db_msd_BC <- css_db_msd[variant_category != 'A' & donor_category == 'cryptic']
+
+css_db_msd_BC[, ref_ES := ifelse(substr(decoy_ref_seq,5,6) %in% c('GT', 'GC'), 1, 0)]
+```
+
+# Figure S6Ai
+```{r}
+nnsplice <- css_db_msd_A[, .(donor_category,nnsplice_decoy_alt)]  %>%
+  group_by(donor_category) %>% add_count(name = 'donor_category_count') %>%
+  filter(!is.na(nnsplice_decoy_alt)) %>% group_by(donor_category,donor_category_count, nnsplice_decoy_alt) %>% 
+  tally(name = 'count') %>% arrange(-nnsplice_decoy_alt) %>%mutate(cumsum = cumsum(count)) %>% 
+  arrange(nnsplice_decoy_alt) %>%
+  mutate(perc = cumsum / donor_category_count)%>% setDT()
+
+nnsplice_cutoffs <- ggplot(nnsplice, aes(x = nnsplice_decoy_alt, y = perc, color = donor_category)) + 
+  geom_line(size =1) + #coord_cartesian(xlim = c(0.3, 1)) +
+  scale_color_manual(values = c('#EB9E00', 'grey')) +
+  geom_vline(xintercept = 0.5, linetype = 'dashed') +
+  annotate("text", x = 0.65, y = 0.05, 
+           label = paste0(scales::percent(nnsplice[nnsplice_decoy_alt >= 0.5 & 
+                                                     donor_category == 'decoy'][1, perc], accuracy = 1), 
+                          " of decoy 5'SS"), 
+           color = 'black')+
+  annotate("text", x = 0.65, y = 0.4, 
+           label = paste0(scales::percent(nnsplice[nnsplice_decoy_alt >= 0.5 & 
+                                                     donor_category == 'cryptic'][1, perc], accuracy = 1), 
+                          " of cryptic 5'SS"), 
+           color = 'black') +
+  labs(x = 'nnsplice score decoy alt', color = '', y = '') +
+  scale_y_continuous(labels = scales::percent)+ theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+
+# Figure S6Aii
+
+```{r}
+mes <- css_db_msd_A[, .(donor_category,mes_decoy_alt)]  %>%
+  group_by(donor_category) %>% add_count(name = 'donor_category_count') %>%
+  filter(!is.na(mes_decoy_alt)) %>% group_by(donor_category,donor_category_count, mes_decoy_alt) %>% 
+  tally(name = 'count') %>% arrange(-mes_decoy_alt) %>%mutate(cumsum = cumsum(count)) %>% arrange(mes_decoy_alt) %>%
+  mutate(perc = cumsum / donor_category_count) %>% setDT()
+
+mes_cutoffs <- ggplot(mes, aes(x = mes_decoy_alt, y = perc, color = donor_category)) + 
+  geom_line(size =1) + #coord_cartesian(xlim = c(0, 1)) +
+  scale_color_manual(values = c('#EB9E00', 'grey')) +
+  geom_vline(xintercept = 1, linetype = 'dashed') +
+  annotate("text", x = -7, y = 0.05, 
+           label = paste0(scales::percent(mes[mes_decoy_alt >= 1 & 
+                                                donor_category == 'decoy'][1, perc], accuracy = 1), " of decoy 5'SS"), 
+           color = 'black')+
+  annotate("text", x = -7, y = 0.84, 
+           label = paste0(scales::percent(mes[mes_decoy_alt >= 1 & 
+                                                donor_category == 'cryptic'][1, perc], accuracy = 1), " of cryptic 5'SS"), 
+           color = 'black') +
+  labs(x = 'MES score decoy alt', color = '', y = '') +
+  scale_y_continuous(labels = scales::percent)+ theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+
+
+# Figure S6Aiii
+```{r}
+median_NIF_pctl <- css_db_msd_A[, .(donor_category,median_NIF_pctl_decoy_alt)]  %>%
+  group_by(donor_category) %>% add_count(name = 'donor_category_count') %>%
+  filter(!is.na(median_NIF_pctl_decoy_alt)) %>% group_by(donor_category,donor_category_count, median_NIF_pctl_decoy_alt) %>% 
+  tally(name = 'count') %>% arrange(-median_NIF_pctl_decoy_alt) %>%mutate(cumsum = cumsum(count)) %>% arrange(median_NIF_pctl_decoy_alt) %>%
+  mutate(perc = cumsum / donor_category_count) %>% setDT()
+
+median_NIF_pctl_cutoffs <- ggplot(median_NIF_pctl, aes(x = median_NIF_pctl_decoy_alt, y = perc, color = donor_category)) + 
+  geom_line(size =1) + #coord_cartesian(xlim = c(0.5, 1)) +
+  scale_color_manual(values = c('#EB9E00', 'grey')) +
+  geom_vline(xintercept = 0.05, linetype = 'dashed') +
+  annotate("text", x = 0.2, y = 0.1, 
+           label = paste0(scales::percent(median_NIF_pctl[median_NIF_pctl_decoy_alt >= 0.05 & 
+                                                      donor_category == 'decoy'][1, perc], accuracy = 1), " of decoy 5'SS"), 
+           color = 'black')+
+  annotate("text", x = 0.2, y = 0.8, 
+           label = paste0(scales::percent(median_NIF_pctl[median_NIF_pctl_decoy_alt >= 0.05 & 
+                                                donor_category == 'cryptic'][1, perc], accuracy = 1), " of cryptic 5'SS"), 
+           color = 'black') +
+  #scale_x_continuous(breaks = seq(0, 1, 0.1)) + 
+  labs(x = 'median_NIF_pctl score decoy alt', color = '', y = '') +
+  scale_y_continuous(labels = scales::percent)+ theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+
+# Figure S6b
+
+```{r}
+# histogram of number of reads for cryptic
+dat <- css_db_msd_A[donor_category == 'cryptic', .(gtex_max_uniq_map_reads, intropolis_max_reads)]  %>%
+  mutate(gtex_max_uniq_map_reads = ifelse(is.na(gtex_max_uniq_map_reads), 0, gtex_max_uniq_map_reads),
+         intropolis_max_reads = ifelse(is.na(intropolis_max_reads), 0, intropolis_max_reads)) %>%
+  rowwise() %>%
+  mutate(max_reads = max(gtex_max_uniq_map_reads, intropolis_max_reads, na.rm = T)) %>%
+  filter(max_reads > 0) %>% 
+  mutate(max_reads = ifelse(max_reads > 100, '>100', as.character(max_reads))) %>%
+  group_by(max_reads) %>% tally()  %>%
+  mutate(max_reads = factor(max_reads, levels = c(as.character(c(1:99)), '>100'))) %>%
+  arrange(max_reads)
+
+a <- ggplot(dat, aes(x = max_reads, y = n)) + geom_bar(stat = 'identity', fill = 'grey') +
+  scale_y_continuous(expand = c(0,0)) +
+  scale_x_discrete(limits=dat$max_reads,breaks=c(dat$max_reads[seq(1,
+                                                                   length(dat$max_reads),by=3)], '>100')) +
+  theme(axis.text.x = element_text(angle= 45, hjust = 1)) + 
+  ylab('# cryptic donors') + xlab('max reads')
+
+```
+
+# S6c
+
+```{r}
+css_db_msd_A[, sample_count := ifelse(is.na(sample_count), 0, sample_count)]
+
+css_db_msd_A[, ns_max_reads := max(ns_gtex_max_uniq_map_reads,ns_intropolis_max_reads),
+             by = 1:nrow(css_db_msd_A)]
+css_db_msd_A[, ns_max_reads_bin := cut(ns_max_reads, breaks = c(0, 100, 
+                                                          250, 500, max(ns_max_reads)))]
+
+```
+
+
+```{r}
+# percent of EI junctions that have 150 reads or less normal splicing
+
+b <- css_db_msd_A %>%
+  dplyr::select(donor_category, in_msd, starts_with('ns_')) %>% 
+  mutate(in_msd = ifelse(in_msd != 'Not in MSD', 'SCE', 'Not in MSD'))%>%
+  ungroup() %>%
+  group_by(donor_category, in_msd, ns_max_reads_bin) %>% tally() %>% 
+  ungroup()  %>%
+  group_by(donor_category, ns_max_reads_bin) %>%
+  mutate(prop = n / sum(n), total = sum(n)) %>%
+  filter(in_msd == 'SCE') %>%
+  ggplot(aes(x = ns_max_reads_bin,y = prop, fill = donor_category)) + 
+  geom_bar(stat = 'identity', position = position_dodge()) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.position = 'none') +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1), expand = expansion(mult = c(0, .1))) +
+     geom_text(aes(label=scales::percent(prop, accuracy = 1)), vjust=-0.25) +
+  #coord_cartesian(ylim  = c(0, 1.1)) +
+  scale_fill_manual(values = c('#EB9E00', 'grey')) +
+  ylab('SCE') + xlab('normal splicing max reads')+
+  theme(plot.margin=unit(c(1,0,1,0),"cm"))+ 
+  facet_wrap(~donor_category, scales = 'free_y')
+```
+
+# Figure S6di
+
+```{r}
+name.labs <- c('SAI delta 0.1', 'SCE top 4')
+names(name.labs) <- c("SAI", "SCE")
+
+d <- css_db_msd_A %>% 
+  mutate(distance_bin = cut(abs(decoy_distance), c(0, 50, 100, 250),
+                                                    include.lowest = T )) %>%
+  dplyr::select(donor_category, SAI_cutoff, SCE_cutoff,distance_bin) %>%
+  pivot_longer(contains('cutoff'))%>%
+  group_by(donor_category, distance_bin, name, value) %>% tally() %>%
+  mutate(prop = n / sum(n)) %>%
+  filter(donor_category == value) %>%
+  filter(donor_category == 'cryptic') %>%
+  mutate(name = gsub('_cutoff', '', name)) %>%
+  mutate(group = paste(name, donor_category)) %>%
+  ggplot(aes(x = distance_bin, y = prop, group = group)) + 
+  geom_bar(stat = 'identity', fill = '#EB9E00') + 
+  facet_wrap(~name, 
+             labeller = labeller(name = name.labs)) + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  +
+     geom_text(aes(label=scales::percent(prop, accuracy = 1)), vjust=-0.25) +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1), expand = c(0,0)) +
+  ylab('cryptic donors (%)') + xlab('cryptic distance to authentic donor') +
+  theme(plot.margin=unit(c(1,2,1,2),"cm")) + 
+  coord_cartesian(ylim = c(0, 1))
+  
+```
+
+# Figure S6dii
+```{r}
+e <- css_db_msd_A[donor_category == 'cryptic', .(donor_category, decoy_distance, 
+         spliceai_decoy_delta = spliceai_decoy_alt - spliceai_decoy_ref)] %>% 
+  mutate(distance_bin = cut(abs(decoy_distance), c(0, 50, 100, 250),
+                                                    include.lowest = T )) %>%
+  ggplot(aes(x = distance_bin, y = spliceai_decoy_delta, fill = donor_category)) + 
+  geom_boxplot(outlier.size = 0.1, outlier.alpha = 0.1, fill = '#EB9E00')+
+  ylab('SAI delta') + xlab('cryptic distance to authentic donor') + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  theme(plot.margin=unit(c(1,2,1,2),"cm")) 
+
+```
+
+# Figure S6e
+
+
+```{r}
+split_6b <- css_db_msd_BC %>% filter(ref_ES == 1 & variant_type == 'SNP') %>%
+  dplyr::select(variant_id, var_dist_from_cryptic,
+                cryptic_donor_seq_ref, cryptic_donor_seq_alt, cryptic_category, in_msd)  %>%
+  separate_rows(var_dist_from_cryptic, cryptic_donor_seq_ref, 
+                cryptic_donor_seq_alt,cryptic_category, sep = ';') %>%
+  filter(cryptic_category != 'A') %>%
+  mutate(var_dist_from_cryptic = as.numeric(var_dist_from_cryptic)) %>% distinct() %>%
+  #filter(var_dist_from_cryptic == 2) %>%
+  mutate(str_pos = ifelse(var_dist_from_cryptic > 0, var_dist_from_cryptic + 4,
+                          var_dist_from_cryptic + 5),
+         ref = substr(cryptic_donor_seq_ref, str_pos, str_pos),
+         alt = substr(cryptic_donor_seq_alt, str_pos, str_pos),
+         nt_change = paste(ref,alt, sep = '>')) %>%
+  mutate(variant = paste(ifelse(var_dist_from_cryptic>0, 
+                                paste0('+', var_dist_from_cryptic), 
+                                var_dist_from_cryptic), nt_change, sep = ':'),
+         variant_pos = ifelse(var_dist_from_cryptic>0, 
+                                paste0('+', var_dist_from_cryptic), 
+                                var_dist_from_cryptic))  %>%
+  group_by(variant_pos, in_msd) %>% tally() %>%
+  mutate(perc= n / sum(n),
+         total = sum(n),
+         in_msd = factor(in_msd, levels = rev(c('In top 4', 'In msd', 'Not in MSD'))),
+         variant_pos= factor(variant_pos,levels = c('-4', '-3', '-2',
+                                                    '-1', '+1', '+2', '+3', '+4', 
+                                                    '+5', '+6', '+7', '+8'))) 
+ 
+
+axis_labels <- distinct(dplyr::select(split_6b, pos = variant_pos, total)) %>%
+  mutate(variant_pos = pos) %>%
+  unite("label", 1:2, sep = '\nn = ')
+
+df <- split_6b %>% left_join(axis_labels, by = 'variant_pos') 
+f <- df %>%
+  ggplot(aes(x = variant_pos, y = perc, fill = in_msd)) + 
+   scale_fill_manual(values = rev(c('#EB9E00','#F0C100', 'grey'))) +
+  geom_bar(width = 0.8, stat = "identity")+
+  geom_text(aes(label=scales::percent(perc,accuracy = 1, y = perc)), 
+            position = position_stack(vjust = 0.5)) +
+  scale_y_continuous(breaks = seq(0, 1, 0.2), 
+                     labels = scales::percent(seq(0, 1, 0.2)),
+                     expand = c(0,0))  +
+  scale_x_discrete(breaks = df$variant_pos, labels = df$label) + 
+  xlab('Variant position') + ylab('') +
+  labs(fill = '') +
+  theme(plot.margin=unit(c(1,2,1,2),"cm"))
+```
+
+
+```{r}
+A <- ggarrange(nnsplice_cutoffs, mes_cutoffs, median_NIF_pctl_cutoffs, nrow = 1)+
+  theme(plot.margin=unit(c(1,0,1,0),"cm"))
+B <- ggarrange(a,b,nrow = 1)
+
+C <- ggarrange(d,e, nrow = 1)
+
+
+ggarrange(A,B,C,f, nrow = 4)
+ggsave('../figures/figure_s6.pdf', height = 12, width = 9.5)
+```
+
+
+
+
+

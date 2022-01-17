@@ -1,0 +1,133 @@
+---
+title: "R Notebook"
+output: 
+---
+
+
+```{r echo = F}
+library(data.table)
+library(tidyverse)
+library(BSgenome.Hsapiens.1000genomes.hs37d5)
+library(expss)
+library(Biobase)
+library(stringi)
+source('../../utils.R')
+library(Biostrings)
+library(universalmotif)
+```
+
+
+
+```{r}
+canonical_donors <- fread('../../data/processed/human_introns.tsv.gz')
+canonical_donors <- canonical_donors[width >= 60]
+
+#break up donor +/-250nt seq into exon, donor and intron windows
+canonical_donors[, exon_seq := substr(window_seq, 1, window_length + max_exon_pos)]
+canonical_donors[, donor_seq := substr(window_seq, window_length + max_exon_pos + 1, window_length + max_intron_pos)]
+canonical_donors[, intron_seq_limit := ifelse(width > 300, nchar(window_seq), 
+                                              window_length + max_intron_pos + 1 + (width - 58))]
+canonical_donors[, intron_seq := substr(window_seq, window_length + max_intron_pos + 1, intron_seq_limit)]
+canonical_donors[, intron_seq_last50 := substr(window_seq, intron_seq_limit + 1, nchar(window_seq))]
+
+```
+
+```{r}
+
+decoy_simulations <- list()
+
+for (i in 1:15) {
+  donor_seqs <- canonical_donors
+  
+  # shuffle exon and intron seq preserving dinucleotide frequencies then paste back together
+  donor_seqs$exon_seq_shuffle <- as.character(shuffle_sequences(DNAStringSet(donor_seqs$exon_seq), 
+                                                                k = 2, method = "euler"))
+  donor_seqs[nchar(intron_seq) <= 2, intron_seq_shuffle := '']
+  donor_seqs[nchar(intron_seq) > 2]$intron_seq_shuffle <- as.character(shuffle_sequences(DNAStringSet(
+    donor_seqs[nchar(intron_seq) > 2]$intron_seq), 
+    k = 2, method = "euler"))
+  
+  # add unshuffled intorn section
+  donor_seqs[, window_seq_shuffle := paste0(exon_seq_shuffle, donor_seq,
+                                            intron_seq_shuffle,
+                                            intron_seq_last50), by = 1:nrow(donor_seqs)]
+  
+  # finding relative position and sequence of all decoys surrounding shuffled hg19 donors sequences
+  donor_seqs[, decoy_seq := list(list(stri_match_all_regex(window_seq_shuffle, regex_donor)[[1]][,2])),
+             by = 1:nrow(donor_seqs)]
+  
+  donor_seqs[, decoy_loc := list(list(stri_locate_all_regex(window_seq_shuffle, regex_donor)[[1]][,1] +
+                                        abs(max_exon_pos) - window_length - 1)), by = 1:nrow(donor_seqs)]
+  
+  
+  donor_seqs_decoys <- donor_seqs[, list(decoy_seq = as.character(unlist(decoy_seq)),
+                                         decoy_loc = as.numeric(unlist(decoy_loc))),
+                                  by = list(tx_id, chrom,  strand, exon_width, width, 
+                                            donor_pos, donor_id, median_NIF, median_NIF_pctl)]
+  
+  
+  donor_seqs_decoys <- donor_seqs_decoys[decoy_loc != 0]
+  
+  # remove decoys which occur beyond bounds of the exon or in the last 50nt of the intron
+  donor_seqs_decoys <- donor_seqs_decoys[decoy_loc >  - (exon_width-4) & decoy_loc < width - 50]
+  
+  # calculate NIF of decoys
+  for (row in 1:nrow(nif_windows)) {
+    window_sel = nif_windows[row,1]
+    adj = nif_windows[row,2]
+    donor_seqs_decoys[, (paste0(window_sel,'_NIF')) := vlookup(substr(decoy_seq, adj, adj + max_intron_pos), 
+                                                               donor_window_stats[window == window_sel], 
+                                                               result_column = 'freq', lookup_column = 'seq')]
+    donor_seqs_decoys[, (paste0(window_sel,'_NIF_pctl')) := vlookup(substr(decoy_seq,  adj, adj + max_intron_pos), 
+                                                                    donor_window_stats[window == window_sel], 
+                                                                    result_column = 'pctl', lookup_column = 'seq')]  
+  }
+  rm(adj, window_sel)
+  
+  donor_seqs_decoys[is.na(donor_seqs_decoys)] <- 0
+  
+  
+  donor_seqs_decoys[, median_NIF_decoy := floor(rowMedians( as.matrix(donor_seqs_decoys[,.(E4_D5_NIF, 
+                                                                                           E3_D6_NIF, 
+                                                                                           E2_D7_NIF, 
+                                                                                           E1_D8_NIF)])))]
+  
+  donor_seqs_decoys[, median_NIF_pctl_decoy := rowMedians( as.matrix(donor_seqs_decoys[,.(E4_D5_NIF_pctl, 
+                                                                                          E3_D6_NIF_pctl, 
+                                                                                          E2_D7_NIF_pctl, 
+                                                                                          E1_D8_NIF_pctl)]))]
+  
+  donor_seqs_decoys <- donor_seqs_decoys[,.(tx_id, donor_id, chrom, donor_pos, strand, exon_width, 
+                                            intron_width = width, median_NIF, median_NIF_pctl,
+                                            decoy_seq, decoy_loc, median_NIF_decoy, median_NIF_pctl_decoy)]
+  
+  decoy_simulations[[i]] <- donor_seqs_decoys
+  rm(donor_seqs, donor_seqs_decoys)
+  i
+}
+
+for (k in 1:15) {
+  decoy_simulations[[k]][, simulation_no := k]
+}
+
+
+decoy_simulations_df <- do.call("rbind", decoy_simulations)
+```
+
+
+```{r}
+decoy_simulations_df[, decoy_location := ifelse(decoy_loc < -10, 'exon',
+                                                   ifelse(abs(decoy_loc) <= 10, 'donor','intron'))]
+decoy_simulations_df[, decoy_location := factor(decoy_location, levels = c('exon', 'donor', 'intron'))]
+
+decoy_simulations_df[, decoy_relative_NIF := median_NIF_pctl_decoy / median_NIF_pctl]
+
+#column denoting which frame decoy is in relative to the authentic donor
+canonical_donors_decoys[, frame := ifelse(abs(decoy_loc %% 3) == 0, 'in-frame', 'out of frame')]
+
+```
+
+```{r}
+setorder(decoy_simulations_df, simulation_no, chrom,donor_id,decoy_loc)
+fwrite(decoy_simulations_df, '../../data/processed/human_introns_decoys_simulations.tsv.gz')
+```

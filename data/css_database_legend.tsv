@@ -1,0 +1,60 @@
+Column Name	Description	Category
+gene_id	gene name	variant info  (repeated for all decoys associated with that variant)
+tx_id	ensembl transcript id	
+tx_version_id	ensembl transcript id with version information	
+strand	positive or negative strand	
+intron_width	width of intron the donor is on the 5' end of	
+exon_width	width of exon the donor is on the 3' end of	
+region_start	"for + strand: beginning of 5' exon, for - strand: end of intron"	
+region_end	"for + strand: end of intron, for - strand: beginning of 5' exon"	
+authentic_donor_pos	position of 'G' of annotated-donor	
+variant_id	hashed variant id created for the purposes of the database	
+source	source of variant. See methods of paper for more details	
+id	another Id column	
+chrom	chromosome	
+pos	position of variant	
+ref	REF nt	
+alt	VAR nt	
+var_start	start position of variant (for indels)	
+var_end	end position of variant (for indels)	
+variant_type	"SNP, INS or DEL"	
+dist_from_donor_start	distance of variant position from annotated-donor	
+dist_from_donor_end	distance of variant position from annotated-donor (different to start for indels)	
+authentic_donor_seq_ref	sequence of REF annotated-donor	
+authentic_donor_seq_alt	sequence of VAR annotated-donor	
+cryptic_sites	info on cryptic-donors (semi-colon delimited for variants with multiple cryptics)	cryptic info (repeated for all decoys associated with that variant)
+cryptic_donor_seq_ref	sequence of REF cryptic-donors (semi-colon delimited for variants with multiple cryptics)	
+cryptic_donor_seq_alt	sequence of VAR cryptic-donors (semi-colon delimited for variants with multiple cryptics)	
+cryptic_donor_pos	genomic position of cryptic-donors (semi-colon delimited for variants with multiple cryptics)	
+cryptic_category	"category of cryptic-donors: A=AM, B = CM, C = AM/CM (see paper) (semi-colon delimited for variants with multiple cryptics)"	
+variant_category	"category of variant: A=AM, B = CM, C = AM/CM (see paper)"	
+var_dist_from_cryptic	distance of variant to cryptic-donor (semi-colon delimited for variants with multiple cryptics)	
+cryptic_distance	distance of cryptic to annotated-donor (semi-colon delimited for variants with multiple cryptics)	
+cryptic_distance_furthest	distance of most distal cryptic for that variant to annotated-donor	
+cryptic_count	count of cryptic-donors activated for that variant	
+decoy_seq	sequence of VAR decoy-donor	decoy info
+decoy_ref_seq	sequence of REF decoy-donor	
+decoy_distance	distance of decoy-donor to annotated-donor	
+decoy_genomic_location	genomic locus of decoy-donor	
+donor_category	whether decoy is activated as a cryptic by the variant	
+resultant_intron_width	the resultant width of the intron if that decoy is activated	
+resultant_exon_width	the resultant width of the exon if that decoy is activated	
+resultant_exon_width_flag	flagged if below the 1st %ile for exon width	
+resultant_intron_width_flag	flagged if below the 1st %ile for intron width	
+preexisting_donor_flag	flagged if decoy is annotated in an alternate transcript	
+spliceai_authentic_ref	spliceAI score for authentic REF	
+spliceai_authentic_alt	spliceAI score for authentic VAR	
+spliceai_decoy_ref	spliceAI score for decoy REF	
+spliceai_decoy_alt	spliceAI score for decoy VAR	
+mes_authentic_ref	maxentscan score for authentic REF	
+mes_authentic_alt	maxentscan score for authentic VAR	
+mes_decoy_ref	maxentscan score for decoy REF	
+mes_decoy_alt	maxentscan score for decoy VAR	
+nnsplice_authentic_ref	nnsplice score for authentic REF	
+nnsplice_authentic_alt	nnsplice score for authentic VAR	
+nnsplice_decoy_ref	nnsplice score for decoy REF	
+nnsplice_decoy_alt	nnsplice score for decoy VAR	
+median_NIF_pctl_authentic_ref	DF score for authentic REF	
+median_NIF_pctl_authentic_alt	DF score for authentic VAR	
+median_NIF_pctl_decoy_alt	DF score for decoy VAR	
+median_NIF_pctl_decoy_ref	DF score for decoy REF	
