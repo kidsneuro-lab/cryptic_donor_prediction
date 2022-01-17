@@ -6,15 +6,10 @@ output:
 ```{r echo = F, setup = T}
 library(tidyverse)
 library(data.table)
-library(BSgenome.Hsapiens.1000genomes.hs37d5)
-library(stringi)
 theme_set(theme_classic())
-library(ggplot2)
+library(ggcorrplot)
 library(ggpubr)
 library(patchwork)
-library(expss)
-library(Rfast)
-library(ggseqlogo)
 source('../../utils.R')
 ```
 
@@ -453,7 +448,7 @@ percentDataAMCM <- percentData
 # Figure 3D
 
 ```{r}
-library(ggcorrplot)
+
 
 # Authentic delta- AM & AM/CM
 a <- ggcorrplot(

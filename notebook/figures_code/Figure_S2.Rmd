@@ -6,15 +6,9 @@ output:
 ```{r echo = F, setup = T}
 library(tidyverse)
 library(data.table)
-library(BSgenome.Hsapiens.1000genomes.hs37d5)
-library(stringi)
 theme_set(theme_classic())
-library(ggplot2)
+library(ggrastr)
 library(ggpubr)
-library(patchwork)
-library(expss)
-library(Rfast)
-library(ggseqlogo)
 source('../../utils.R')
 ```
 

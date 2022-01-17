@@ -8,12 +8,7 @@ output:
 library(data.table)
 library(tidyverse)
 theme_set(theme_classic())
-# library(ggpmisc)
-# library(BSgenome.Hsapiens.1000genomes.hs37d5)
-# library(biomaRt)
-# library(ggsci)
-# library(RColorBrewer)
-# library(ggpubr)
+library(ggpubr)
 ```
 
 # Supplemental

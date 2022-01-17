@@ -1,4 +1,4 @@
-library(DescTools)
+#library(DescTools)
 # variables
 max_exon_pos = -4
 max_intron_pos = 8

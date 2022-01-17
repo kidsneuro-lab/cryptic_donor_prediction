@@ -7,19 +7,9 @@ output:
 ```{r setup}
 library(tidyverse)
 library(data.table)
-library(TRAMPR)
 library(ggseqlogo)
 library(ggpubr)
-library(ggsci)
-library(BSgenome.Hsapiens.1000genomes.hs37d5)
 theme_set(theme_classic())
-library(ggpmisc)
-library(Rfast)
-library(caret)
-library(scales)
-library(GGally)
-library(gridExtra)
-library(ggseqlogo)
 ```
 
 ```{r}
@@ -217,7 +207,7 @@ ecdf(both)(c(250))
 
 ```{r}
 # exon length percentiles - exclude first and last exons
-exons <- fread('../../data/ref/ensembl75_canonical_exons.tsv')
+exons <- fread('../../data/ref/ensembl75_canonical_exons.tsv.gz')
 exons <- exons[exon_no != 1 & exon_no != nexon]
 
 data <- css_db[donor_category == 'decoy' & abs(decoy_distance) < 250]%>%

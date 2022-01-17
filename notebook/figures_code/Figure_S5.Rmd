@@ -4,14 +4,13 @@ output:
 ---
 
 ```{r}
-library(ggrastr)
 library(ggpubr)
 library(data.table)
 source('../../utils.R')
 
 
 canonical_donors_decoys <- fread('../../data/processed/human_introns_decoys.tsv.gz')
-simulation_decoys <- fread('../../data/ref/human_introns_decoys_simulations.tsv.gz')
+simulation_decoys <- fread('../../data/processed/human_introns_decoys_simulations.tsv.gz')
 ```
 
 

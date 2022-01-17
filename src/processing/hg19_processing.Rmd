@@ -8,21 +8,18 @@ library(data.table)
 library(tidyverse)
 library(BSgenome.Hsapiens.1000genomes.hs37d5)
 library(expss)
-library(Biobase)
 library(stringi)
-library(gtools)
 source('../../utils.R')
-library(rematch2)
 ```
 
 
 ```{r}
 # load canonical introns
-introns <- fread('../../data/ref/ensembl75_canonical_introns.tsv')
+introns <- fread('../../data/ref/ensembl75_canonical_introns.tsv.gz')
 # remove first and last introns
 introns <- introns[intron_no != 1 & intron_no != (nexon - 1)]
 # load canonical exons
-exons <- fread('../../data/ref/ensembl75_canonical_exons.tsv')
+exons <- fread('../../data/ref/ensembl75_canonical_exons.tsv.gz')
 
 # remove single exon transcripts
 exons <- exons[nexon != 1]
@@ -47,7 +44,7 @@ canonical_donors <- exons[,.(chrom,exon_end,exon_width = width)][introns,
 canonical_donors <- canonical_donors[!is.na(exon_width)]
 
 # remove donors outside transcript ORFs
-cds_df <- fread('../../data/ref/hg19_orfs.tsv')
+cds_df <- fread('../../data/ref/hg19_orfs.tsv.gz')
 tx_orfs <- cds_df %>%
   group_by(tx_id, chr, strand) %>%
   dplyr::summarise(min_start = min(start), min_end = min(end),

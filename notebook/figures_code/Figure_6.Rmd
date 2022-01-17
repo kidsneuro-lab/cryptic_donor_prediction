@@ -7,18 +7,15 @@ output:
 ```{r}
 library(data.table)
 library(tidyverse)
-library(purrr)
-library(expss)
 theme_set(theme_classic())
 library(ggpubr)
 options(scipen=999)
 library(eulerr)
 library(patchwork)
-library(BSgenome.Hsapiens.1000genomes.hs37d5)
 ```
 
 ```{r}
-css_db_msd <- fread('../../data/processed/css_database_msd.tsv')
+css_db_msd <- fread('../../data/processed/css_database_msd.tsv.gz')
 ```
 
 

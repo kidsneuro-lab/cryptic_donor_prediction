@@ -8,49 +8,16 @@ output:
 library(tidyverse)
 library(data.table)
 library(TRAMPR)
-library(ggseqlogo)
 library(ggpubr)
-library(ggsci)
-library(BSgenome.Hsapiens.1000genomes.hs37d5)
 theme_set(theme_classic())
-library(ggpmisc)
-library(Rfast)
-library(caret)
-library(scales)
-library(GGally)
 library(gridExtra)
 library(patchwork)
 ```
 
 ```{r}
-css_db <- fread('../../data/processed/css_database.tsv')
+css_db <- fread('../../data/processed/css_database.tsv.gz')
 ```
 
-
-```{r}
-# CSS database basic stats - 
-
-data.table(genes = length(unique(css_db$gene_id)),
-           variants = length(unique(css_db$variant_id)),
-           cryptics = nrow(css_db[donor_category == 'cryptic']),
-           decoys = nrow(css_db[donor_category == 'decoy']))
-
-# number of variants from each source
-distinct(css_db[, .(variant_id, source)]) %>% group_by(source) %>% tally()
-
-# number of each variant type (DEL, INS, SNP)
-distinct(css_db[,.(variant_id, variant_type) ]) %>% group_by(variant_type) %>% tally()
-
-# numbers of each cryptic type (A,B,C)
-distinct(css_db[, 1:81]) %>% separate_rows(contains('cryptic'), sep = '\\;') %>%
-  group_by(cryptic_category) %>% tally()
-
-# numbers of each variant type (A,B,C)
-distinct(css_db[, 1:81])  %>%
-  group_by(variant_category) %>% tally()
-
-
-```
 
 # Figure 1Ci
 

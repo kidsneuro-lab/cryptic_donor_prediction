@@ -13,7 +13,7 @@ library(patchwork)
 # Figure S1A
 
 ```{r}
-hg19_introns <- fread('../../data/ref/ensembl75_canonical_introns.tsv')
+hg19_introns <- fread('../../data/ref/ensembl75_canonical_introns.tsv.gz')
 hg19_introns[, donor_pos := ifelse(strand == '+', start, end)]
 ```
 

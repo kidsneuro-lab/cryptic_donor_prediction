@@ -15,6 +15,7 @@ find_loc_donor <- function(location) {
 find_loc_donor <- Vectorize(find_loc_donor)
 theme_set(theme_classic())
 library(gtools)
+library(stringi)
 ```
 
 ```{r}
@@ -234,7 +235,7 @@ canonical_donors[, DF_bin := cut(median_NIF_pctl,
 hg19_2nt_freq_DF <- window_tally(2, canonical_donors, grouping_variable = 'DF_bin')
 
 
-hg19_2nt_freq_DF <- dict[hg19_2nt_freq_DF, on = .(twont_windows)]
+hg19_2nt_freq_DF <- dict[hg19_2nt_freq_DF, on = .(twont_windows= windows)]
 
 hg19_2nt_freq_DF[, group := paste0(twont_windows, loc)]
 
